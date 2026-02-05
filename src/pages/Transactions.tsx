@@ -1,0 +1,538 @@
+ import { useState, useEffect } from 'react';
+ import { useSearchParams } from 'react-router-dom';
+ import { AppLayout } from '@/components/layout/AppLayout';
+ import { EmptyState } from '@/components/common/EmptyState';
+ import { CategoryBadge } from '@/components/common/CategoryBadge';
+ import { MoneyAmount } from '@/components/common/MoneyAmount';
+ import { Button } from '@/components/ui/button';
+ import { Input } from '@/components/ui/input';
+ import { Label } from '@/components/ui/label';
+ import { Checkbox } from '@/components/ui/checkbox';
+ import {
+   Select,
+   SelectContent,
+   SelectItem,
+   SelectTrigger,
+   SelectValue,
+ } from '@/components/ui/select';
+ import {
+   Dialog,
+   DialogContent,
+   DialogDescription,
+   DialogFooter,
+   DialogHeader,
+   DialogTitle,
+ } from '@/components/ui/dialog';
+ import {
+   Table,
+   TableBody,
+   TableCell,
+   TableHead,
+   TableHeader,
+   TableRow,
+ } from '@/components/ui/table';
+ import { supabase } from '@/integrations/supabase/client';
+ import { useAuth } from '@/hooks/useAuth';
+ import { useToast } from '@/hooks/use-toast';
+ import { formatDate, CATEGORY_OPTIONS } from '@/lib/constants';
+ import { 
+   ArrowUpDown, 
+   Search, 
+   Filter, 
+   Pencil,
+   Loader2,
+   AlertCircle,
+   ListFilter,
+   X
+ } from 'lucide-react';
+ 
+ interface Transaction {
+   id: string;
+   date: string;
+   description: string;
+   amount: number;
+   category: string;
+   subcategory: string | null;
+   property_id: string | null;
+   unit_id: string | null;
+   needs_review: boolean;
+   property?: { name: string } | null;
+   unit?: { label: string } | null;
+ }
+ 
+ interface Property {
+   id: string;
+   name: string;
+   units: { id: string; label: string }[];
+ }
+ 
+ export default function Transactions() {
+   const [searchParams, setSearchParams] = useSearchParams();
+   const [transactions, setTransactions] = useState<Transaction[]>([]);
+   const [properties, setProperties] = useState<Property[]>([]);
+   const [loading, setLoading] = useState(true);
+   const [showEditDialog, setShowEditDialog] = useState(false);
+   const [showRuleDialog, setShowRuleDialog] = useState(false);
+   const [editingTx, setEditingTx] = useState<Transaction | null>(null);
+   const [saving, setSaving] = useState(false);
+   
+   // Filters
+   const [searchQuery, setSearchQuery] = useState('');
+   const [categoryFilter, setCategoryFilter] = useState<string>('all');
+   const [needsReviewFilter, setNeedsReviewFilter] = useState(searchParams.get('needsReview') === 'true');
+   const [propertyFilter, setPropertyFilter] = useState<string>('all');
+   
+   // Edit form
+   const [editForm, setEditForm] = useState({
+     category: '',
+     subcategory: '',
+     property_id: '',
+     unit_id: '',
+     needs_review: false,
+   });
+   
+   // Rule form
+   const [ruleForm, setRuleForm] = useState({
+     name: '',
+     pattern: '',
+     match_type: 'contains' as 'contains' | 'regex',
+     category: '',
+     property_id: '',
+   });
+ 
+   const { user } = useAuth();
+   const { toast } = useToast();
+ 
+   useEffect(() => {
+     if (user) {
+       fetchTransactions();
+       fetchProperties();
+     }
+   }, [user]);
+ 
+   async function fetchTransactions() {
+     if (!user) return;
+     setLoading(true);
+     try {
+       const { data, error } = await supabase
+         .from('transactions')
+         .select(`
+           id, date, description, amount, category, subcategory, 
+           property_id, unit_id, needs_review,
+           property:properties(name),
+           unit:units(label)
+         `)
+         .eq('user_id', user.id)
+         .order('date', { ascending: false })
+         .limit(500);
+ 
+       if (error) throw error;
+       
+       setTransactions(data?.map(tx => ({
+         ...tx,
+         amount: typeof tx.amount === 'string' ? parseFloat(tx.amount) : Number(tx.amount),
+         property: tx.property as { name: string } | null,
+         unit: tx.unit as { label: string } | null,
+       })) || []);
+     } catch (error) {
+       console.error('Error fetching transactions:', error);
+       toast({ variant: 'destructive', title: 'Error loading transactions' });
+     } finally {
+       setLoading(false);
+     }
+   }
+ 
+   async function fetchProperties() {
+     if (!user) return;
+     try {
+       const { data } = await supabase
+         .from('properties')
+         .select('id, name, units(id, label)')
+         .eq('user_id', user.id)
+         .order('name');
+       setProperties(data || []);
+     } catch (error) {
+       console.error('Error fetching properties:', error);
+     }
+   }
+ 
+   async function saveTransaction() {
+     if (!editingTx) return;
+     setSaving(true);
+     try {
+       const { error } = await supabase
+         .from('transactions')
+         .update({
+           category: editForm.category as any,
+           subcategory: editForm.subcategory || null,
+           property_id: editForm.property_id || null,
+           unit_id: editForm.unit_id || null,
+           needs_review: editForm.needs_review,
+         })
+         .eq('id', editingTx.id);
+ 
+       if (error) throw error;
+       toast({ title: 'Transaction updated' });
+       setShowEditDialog(false);
+       fetchTransactions();
+     } catch (error) {
+       console.error('Error updating transaction:', error);
+       toast({ variant: 'destructive', title: 'Error updating transaction' });
+     } finally {
+       setSaving(false);
+     }
+   }
+ 
+   async function createRule() {
+     if (!user || !ruleForm.name || !ruleForm.pattern || !ruleForm.category) return;
+     setSaving(true);
+     try {
+       const { error } = await supabase
+         .from('rules')
+         .insert({
+           user_id: user.id,
+           name: ruleForm.name,
+           pattern: ruleForm.pattern,
+           match_type: ruleForm.match_type as any,
+           category: ruleForm.category as any,
+           property_id: ruleForm.property_id || null,
+           priority: 0,
+         });
+ 
+       if (error) throw error;
+       toast({ title: 'Rule created', description: 'Future transactions matching this pattern will be auto-categorized.' });
+       setShowRuleDialog(false);
+       setRuleForm({ name: '', pattern: '', match_type: 'contains', category: '', property_id: '' });
+     } catch (error) {
+       console.error('Error creating rule:', error);
+       toast({ variant: 'destructive', title: 'Error creating rule' });
+     } finally {
+       setSaving(false);
+     }
+   }
+ 
+   function openEditDialog(tx: Transaction) {
+     setEditingTx(tx);
+     setEditForm({
+       category: tx.category,
+       subcategory: tx.subcategory || '',
+       property_id: tx.property_id || '',
+       unit_id: tx.unit_id || '',
+       needs_review: tx.needs_review,
+     });
+     setShowEditDialog(true);
+   }
+ 
+   function openRuleDialog(tx: Transaction) {
+     setRuleForm({
+       name: `Rule for "${tx.description.slice(0, 30)}..."`,
+       pattern: tx.description.split(' ').slice(0, 3).join(' '),
+       match_type: 'contains',
+       category: tx.category,
+       property_id: tx.property_id || '',
+     });
+     setShowRuleDialog(true);
+   }
+ 
+   // Filter transactions
+   const filteredTransactions = transactions.filter((tx) => {
+     if (searchQuery && !tx.description.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+     if (categoryFilter !== 'all' && tx.category !== categoryFilter) return false;
+     if (needsReviewFilter && !tx.needs_review) return false;
+     if (propertyFilter !== 'all' && tx.property_id !== propertyFilter) return false;
+     return true;
+   });
+ 
+   const selectedPropertyUnits = properties.find(p => p.id === editForm.property_id)?.units || [];
+ 
+   if (loading) {
+     return (
+       <AppLayout>
+         <div className="page-container flex items-center justify-center min-h-[400px]">
+           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+         </div>
+       </AppLayout>
+     );
+   }
+ 
+   return (
+     <AppLayout>
+       <div className="page-container">
+         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+           <div>
+             <h1 className="page-title">Transactions</h1>
+             <p className="page-description">{filteredTransactions.length} of {transactions.length} transactions</p>
+           </div>
+         </div>
+ 
+         {/* Filters */}
+         <div className="flex flex-wrap gap-3 mb-6 p-4 bg-card rounded-lg border">
+           <div className="flex-1 min-w-[200px]">
+             <div className="relative">
+               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+               <Input
+                 placeholder="Search descriptions..."
+                 value={searchQuery}
+                 onChange={(e) => setSearchQuery(e.target.value)}
+                 className="pl-9"
+               />
+             </div>
+           </div>
+           <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+             <SelectTrigger className="w-[180px]">
+               <SelectValue placeholder="Category" />
+             </SelectTrigger>
+             <SelectContent>
+               <SelectItem value="all">All Categories</SelectItem>
+               {CATEGORY_OPTIONS.map((cat) => (
+                 <SelectItem key={cat.value} value={cat.value}>{cat.label}</SelectItem>
+               ))}
+             </SelectContent>
+           </Select>
+           <Select value={propertyFilter} onValueChange={setPropertyFilter}>
+             <SelectTrigger className="w-[180px]">
+               <SelectValue placeholder="Property" />
+             </SelectTrigger>
+             <SelectContent>
+               <SelectItem value="all">All Properties</SelectItem>
+               {properties.map((prop) => (
+                 <SelectItem key={prop.id} value={prop.id}>{prop.name}</SelectItem>
+               ))}
+             </SelectContent>
+           </Select>
+           <Button
+             variant={needsReviewFilter ? 'default' : 'outline'}
+             onClick={() => setNeedsReviewFilter(!needsReviewFilter)}
+             className="gap-2"
+           >
+             <AlertCircle className="h-4 w-4" />
+             Needs Review
+           </Button>
+           {(searchQuery || categoryFilter !== 'all' || needsReviewFilter || propertyFilter !== 'all') && (
+             <Button
+               variant="ghost"
+               onClick={() => {
+                 setSearchQuery('');
+                 setCategoryFilter('all');
+                 setNeedsReviewFilter(false);
+                 setPropertyFilter('all');
+               }}
+             >
+               <X className="h-4 w-4 mr-1" />
+               Clear
+             </Button>
+           )}
+         </div>
+ 
+         {/* Transactions Table */}
+         {transactions.length === 0 ? (
+           <EmptyState
+             icon={<ArrowUpDown className="h-12 w-12" />}
+             title="No transactions yet"
+             description="Upload a bank statement to import transactions"
+           />
+         ) : filteredTransactions.length === 0 ? (
+           <EmptyState
+             icon={<Filter className="h-12 w-12" />}
+             title="No matching transactions"
+             description="Try adjusting your filters"
+           />
+         ) : (
+           <div className="bg-card rounded-lg border overflow-hidden">
+             <Table>
+               <TableHeader>
+                 <TableRow className="bg-muted/50">
+                   <TableHead className="w-[100px]">Date</TableHead>
+                   <TableHead>Description</TableHead>
+                   <TableHead>Category</TableHead>
+                   <TableHead>Property</TableHead>
+                   <TableHead className="text-right">Amount</TableHead>
+                   <TableHead className="w-[100px]"></TableHead>
+                 </TableRow>
+               </TableHeader>
+               <TableBody>
+                 {filteredTransactions.map((tx) => (
+                   <TableRow key={tx.id} className={tx.needs_review ? 'bg-warning/5' : ''}>
+                     <TableCell className="text-sm text-muted-foreground">{formatDate(tx.date)}</TableCell>
+                     <TableCell>
+                       <div className="flex items-center gap-2">
+                         {tx.needs_review && <AlertCircle className="h-4 w-4 text-warning flex-shrink-0" />}
+                         <span className="truncate max-w-[300px]">{tx.description}</span>
+                       </div>
+                     </TableCell>
+                     <TableCell><CategoryBadge category={tx.category} /></TableCell>
+                     <TableCell className="text-sm text-muted-foreground">
+                       {tx.property?.name || '—'}
+                       {tx.unit?.label && ` / ${tx.unit.label}`}
+                     </TableCell>
+                     <TableCell className="text-right">
+                       <MoneyAmount amount={tx.amount} />
+                     </TableCell>
+                     <TableCell>
+                       <div className="flex gap-1">
+                         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEditDialog(tx)}>
+                           <Pencil className="h-4 w-4" />
+                         </Button>
+                         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openRuleDialog(tx)}>
+                           <ListFilter className="h-4 w-4" />
+                         </Button>
+                       </div>
+                     </TableCell>
+                   </TableRow>
+                 ))}
+               </TableBody>
+             </Table>
+           </div>
+         )}
+ 
+         {/* Edit Transaction Dialog */}
+         <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+           <DialogContent className="max-w-lg">
+             <DialogHeader>
+               <DialogTitle>Edit Transaction</DialogTitle>
+               <DialogDescription>
+                 {editingTx?.description}
+               </DialogDescription>
+             </DialogHeader>
+             <div className="space-y-4 py-4">
+               <div className="space-y-2">
+                 <Label>Category</Label>
+                 <Select value={editForm.category} onValueChange={(v) => setEditForm({ ...editForm, category: v })}>
+                   <SelectTrigger>
+                     <SelectValue />
+                   </SelectTrigger>
+                   <SelectContent>
+                     {CATEGORY_OPTIONS.map((cat) => (
+                       <SelectItem key={cat.value} value={cat.value}>{cat.label}</SelectItem>
+                     ))}
+                   </SelectContent>
+                 </Select>
+               </div>
+               <div className="space-y-2">
+                 <Label>Subcategory (optional)</Label>
+                 <Input value={editForm.subcategory} onChange={(e) => setEditForm({ ...editForm, subcategory: e.target.value })} placeholder="e.g., Plumbing, HVAC" />
+               </div>
+               <div className="grid grid-cols-2 gap-4">
+                 <div className="space-y-2">
+                   <Label>Property</Label>
+                   <Select value={editForm.property_id || 'none'} onValueChange={(v) => setEditForm({ ...editForm, property_id: v === 'none' ? '' : v, unit_id: '' })}>
+                     <SelectTrigger>
+                       <SelectValue placeholder="Select property" />
+                     </SelectTrigger>
+                     <SelectContent>
+                       <SelectItem value="none">None</SelectItem>
+                       {properties.map((prop) => (
+                         <SelectItem key={prop.id} value={prop.id}>{prop.name}</SelectItem>
+                       ))}
+                     </SelectContent>
+                   </Select>
+                 </div>
+                 <div className="space-y-2">
+                   <Label>Unit</Label>
+                   <Select 
+                     value={editForm.unit_id || 'none'} 
+                     onValueChange={(v) => setEditForm({ ...editForm, unit_id: v === 'none' ? '' : v })}
+                     disabled={!editForm.property_id}
+                   >
+                     <SelectTrigger>
+                       <SelectValue placeholder="Select unit" />
+                     </SelectTrigger>
+                     <SelectContent>
+                       <SelectItem value="none">None</SelectItem>
+                       {selectedPropertyUnits.map((unit) => (
+                         <SelectItem key={unit.id} value={unit.id}>{unit.label}</SelectItem>
+                       ))}
+                     </SelectContent>
+                   </Select>
+                 </div>
+               </div>
+               <div className="flex items-center space-x-2">
+                 <Checkbox
+                   id="needsReview"
+                   checked={editForm.needs_review}
+                   onCheckedChange={(checked) => setEditForm({ ...editForm, needs_review: checked as boolean })}
+                 />
+                 <Label htmlFor="needsReview" className="text-sm font-normal">Needs review</Label>
+               </div>
+             </div>
+             <DialogFooter>
+               <Button variant="outline" onClick={() => setShowEditDialog(false)}>Cancel</Button>
+               <Button onClick={saveTransaction} disabled={saving}>
+                 {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                 Save Changes
+               </Button>
+             </DialogFooter>
+           </DialogContent>
+         </Dialog>
+ 
+         {/* Create Rule Dialog */}
+         <Dialog open={showRuleDialog} onOpenChange={setShowRuleDialog}>
+           <DialogContent>
+             <DialogHeader>
+               <DialogTitle>Create Rule from Transaction</DialogTitle>
+               <DialogDescription>
+                 Create a rule to automatically categorize similar transactions.
+               </DialogDescription>
+             </DialogHeader>
+             <div className="space-y-4 py-4">
+               <div className="space-y-2">
+                 <Label>Rule Name</Label>
+                 <Input value={ruleForm.name} onChange={(e) => setRuleForm({ ...ruleForm, name: e.target.value })} />
+               </div>
+               <div className="space-y-2">
+                 <Label>Match Pattern</Label>
+                 <Input value={ruleForm.pattern} onChange={(e) => setRuleForm({ ...ruleForm, pattern: e.target.value })} placeholder="Text to match in description" />
+               </div>
+               <div className="space-y-2">
+                 <Label>Match Type</Label>
+                 <Select value={ruleForm.match_type} onValueChange={(v: 'contains' | 'regex') => setRuleForm({ ...ruleForm, match_type: v })}>
+                   <SelectTrigger>
+                     <SelectValue />
+                   </SelectTrigger>
+                   <SelectContent>
+                     <SelectItem value="contains">Contains</SelectItem>
+                     <SelectItem value="regex">Regex</SelectItem>
+                   </SelectContent>
+                 </Select>
+               </div>
+               <div className="space-y-2">
+                 <Label>Category to Apply</Label>
+                 <Select value={ruleForm.category} onValueChange={(v) => setRuleForm({ ...ruleForm, category: v })}>
+                   <SelectTrigger>
+                     <SelectValue placeholder="Select category" />
+                   </SelectTrigger>
+                   <SelectContent>
+                     {CATEGORY_OPTIONS.map((cat) => (
+                       <SelectItem key={cat.value} value={cat.value}>{cat.label}</SelectItem>
+                     ))}
+                   </SelectContent>
+                 </Select>
+               </div>
+               <div className="space-y-2">
+                 <Label>Property (optional)</Label>
+                 <Select value={ruleForm.property_id || 'none'} onValueChange={(v) => setRuleForm({ ...ruleForm, property_id: v === 'none' ? '' : v })}>
+                   <SelectTrigger>
+                     <SelectValue placeholder="Select property" />
+                   </SelectTrigger>
+                   <SelectContent>
+                     <SelectItem value="none">None</SelectItem>
+                     {properties.map((prop) => (
+                       <SelectItem key={prop.id} value={prop.id}>{prop.name}</SelectItem>
+                     ))}
+                   </SelectContent>
+                 </Select>
+               </div>
+             </div>
+             <DialogFooter>
+               <Button variant="outline" onClick={() => setShowRuleDialog(false)}>Cancel</Button>
+               <Button onClick={createRule} disabled={saving || !ruleForm.name || !ruleForm.pattern || !ruleForm.category}>
+                 {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                 Create Rule
+               </Button>
+             </DialogFooter>
+           </DialogContent>
+         </Dialog>
+       </div>
+     </AppLayout>
+   );
+ }
