@@ -83,7 +83,7 @@ export default function Index() {
       let needsReviewCount = 0;
 
       transactions?.forEach((tx) => {
-        const amount = parseFloat(tx.amount as string);
+        const amount = typeof tx.amount === 'string' ? parseFloat(tx.amount) : Number(tx.amount);
         const categoryType = CATEGORY_CONFIG[tx.category]?.type;
         
         if (categoryType === 'income' || amount > 0) {
@@ -121,7 +121,7 @@ export default function Index() {
 
       setRecentTransactions(recent?.map(tx => ({
         ...tx,
-        amount: parseFloat(tx.amount as string),
+        amount: typeof tx.amount === 'string' ? parseFloat(tx.amount) : Number(tx.amount),
       })) || []);
 
     } catch (error) {
