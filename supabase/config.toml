@@ -1,1 +1,4 @@
-project_id = "uechyzffemuspfzkmphh"
+ project_id = "uechyzffemuspfzkmphh"
+ 
+ [functions.process-csv]
+ verify_jwt = false
