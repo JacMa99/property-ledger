@@ -46,19 +46,20 @@
    X
  } from 'lucide-react';
  
- interface Transaction {
-   id: string;
-   date: string;
-   description: string;
-   amount: number;
-   category: string;
-   subcategory: string | null;
-   property_id: string | null;
-   unit_id: string | null;
-   needs_review: boolean;
-   property?: { name: string } | null;
-   unit?: { label: string } | null;
- }
+interface Transaction {
+  id: string;
+  date: string;
+  description: string;
+  amount: number;
+  category: string;
+  subcategory: string | null;
+  type: 'income' | 'expense';
+  property_id: string | null;
+  unit_id: string | null;
+  needs_review: boolean;
+  property?: { name: string } | null;
+  unit?: { label: string } | null;
+}
  
  interface Property {
    id: string;
@@ -82,14 +83,15 @@
    const [needsReviewFilter, setNeedsReviewFilter] = useState(searchParams.get('needsReview') === 'true');
    const [propertyFilter, setPropertyFilter] = useState<string>('all');
    
-   // Edit form
-   const [editForm, setEditForm] = useState({
-     category: '',
-     subcategory: '',
-     property_id: '',
-     unit_id: '',
-     needs_review: false,
-   });
+  // Edit form
+  const [editForm, setEditForm] = useState({
+    category: '',
+    subcategory: '',
+    type: 'expense' as 'income' | 'expense',
+    property_id: '',
+    unit_id: '',
+    needs_review: false,
+  });
    
    // Rule form
    const [ruleForm, setRuleForm] = useState({
@@ -114,26 +116,27 @@
      if (!user) return;
      setLoading(true);
      try {
-       const { data, error } = await supabase
-         .from('transactions')
-         .select(`
-           id, date, description, amount, category, subcategory, 
-           property_id, unit_id, needs_review,
-           property:properties(name),
-           unit:units(label)
-         `)
-         .eq('user_id', user.id)
-         .order('date', { ascending: false })
-         .limit(500);
+      const { data, error } = await supabase
+        .from('transactions')
+        .select(`
+          id, date, description, amount, category, subcategory, type,
+          property_id, unit_id, needs_review,
+          property:properties(name),
+          unit:units(label)
+        `)
+        .eq('user_id', user.id)
+        .order('date', { ascending: false })
+        .limit(500);
  
        if (error) throw error;
        
-       setTransactions(data?.map(tx => ({
-         ...tx,
-         amount: typeof tx.amount === 'string' ? parseFloat(tx.amount) : Number(tx.amount),
-         property: tx.property as { name: string } | null,
-         unit: tx.unit as { label: string } | null,
-       })) || []);
+      setTransactions(data?.map(tx => ({
+        ...tx,
+        amount: typeof tx.amount === 'string' ? parseFloat(tx.amount) : Number(tx.amount),
+        type: (tx as any).type || 'expense',
+        property: tx.property as { name: string } | null,
+        unit: tx.unit as { label: string } | null,
+      })) || []);
      } catch (error) {
        console.error('Error fetching transactions:', error);
        toast({ variant: 'destructive', title: 'Error loading transactions' });
@@ -160,16 +163,17 @@
      if (!editingTx) return;
      setSaving(true);
      try {
-       const { error } = await supabase
-         .from('transactions')
-         .update({
-           category: editForm.category as any,
-           subcategory: editForm.subcategory || null,
-           property_id: editForm.property_id || null,
-           unit_id: editForm.unit_id || null,
-           needs_review: editForm.needs_review,
-         })
-         .eq('id', editingTx.id);
+      const { error } = await supabase
+        .from('transactions')
+        .update({
+          category: editForm.category as any,
+          subcategory: editForm.subcategory || null,
+          type: editForm.type as any,
+          property_id: editForm.property_id || null,
+          unit_id: editForm.unit_id || null,
+          needs_review: editForm.needs_review,
+        })
+        .eq('id', editingTx.id);
  
        if (error) throw error;
        toast({ title: 'Transaction updated' });
@@ -213,13 +217,14 @@
  
    function openEditDialog(tx: Transaction) {
      setEditingTx(tx);
-     setEditForm({
-       category: tx.category,
-       subcategory: tx.subcategory || '',
-       property_id: tx.property_id || '',
-       unit_id: tx.unit_id || '',
-       needs_review: tx.needs_review,
-     });
+    setEditForm({
+      category: tx.category,
+      subcategory: tx.subcategory || '',
+      type: tx.type || 'expense',
+      property_id: tx.property_id || '',
+      unit_id: tx.unit_id || '',
+      needs_review: tx.needs_review,
+    });
      setShowEditDialog(true);
    }
  
@@ -340,44 +345,55 @@
          ) : (
            <div className="bg-card rounded-lg border overflow-hidden">
              <Table>
-               <TableHeader>
-                 <TableRow className="bg-muted/50">
-                   <TableHead className="w-[100px]">Date</TableHead>
-                   <TableHead>Description</TableHead>
-                   <TableHead>Category</TableHead>
-                   <TableHead>Property</TableHead>
-                   <TableHead className="text-right">Amount</TableHead>
-                   <TableHead className="w-[100px]"></TableHead>
-                 </TableRow>
-               </TableHeader>
-               <TableBody>
-                 {filteredTransactions.map((tx) => (
-                   <TableRow key={tx.id} className={tx.needs_review ? 'bg-warning/5' : ''}>
-                     <TableCell className="text-sm text-muted-foreground">{formatDate(tx.date)}</TableCell>
-                     <TableCell>
-                       <div className="flex items-center gap-2">
-                         {tx.needs_review && <AlertCircle className="h-4 w-4 text-warning flex-shrink-0" />}
-                         <span className="truncate max-w-[300px]">{tx.description}</span>
-                       </div>
-                     </TableCell>
-                     <TableCell><CategoryBadge category={tx.category} /></TableCell>
-                     <TableCell className="text-sm text-muted-foreground">
-                       {tx.property?.name || '—'}
-                       {tx.unit?.label && ` / ${tx.unit.label}`}
-                     </TableCell>
-                     <TableCell className="text-right">
-                       <MoneyAmount amount={tx.amount} />
-                     </TableCell>
-                     <TableCell>
-                       <div className="flex gap-1">
-                         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEditDialog(tx)}>
-                           <Pencil className="h-4 w-4" />
-                         </Button>
-                         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openRuleDialog(tx)}>
-                           <ListFilter className="h-4 w-4" />
-                         </Button>
-                       </div>
-                     </TableCell>
+              <TableHeader>
+                  <TableRow className="bg-muted/50">
+                    <TableHead className="w-[100px]">Date</TableHead>
+                    <TableHead>Description</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Category</TableHead>
+                    <TableHead>Property</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead className="w-[100px]"></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredTransactions.map((tx) => (
+                    <TableRow key={tx.id} className={tx.needs_review ? 'bg-warning/5' : ''}>
+                      <TableCell className="text-sm text-muted-foreground">{formatDate(tx.date)}</TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          {tx.needs_review && <AlertCircle className="h-4 w-4 text-warning flex-shrink-0" />}
+                          <span className="truncate max-w-[300px]">{tx.description}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full ${
+                          tx.type === 'income' 
+                            ? 'bg-success/10 text-success' 
+                            : 'bg-destructive/10 text-destructive'
+                        }`}>
+                          <span className={`h-1.5 w-1.5 rounded-full ${tx.type === 'income' ? 'bg-success' : 'bg-destructive'}`} />
+                          {tx.type === 'income' ? 'Income' : 'Expense'}
+                        </span>
+                      </TableCell>
+                      <TableCell><CategoryBadge category={tx.category} /></TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {tx.property?.name || '—'}
+                        {tx.unit?.label && ` / ${tx.unit.label}`}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <MoneyAmount amount={tx.amount} />
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex gap-1">
+                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEditDialog(tx)}>
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openRuleDialog(tx)}>
+                            <ListFilter className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
                    </TableRow>
                  ))}
                </TableBody>
@@ -407,10 +423,32 @@
                      ))}
                    </SelectContent>
                  </Select>
-               </div>
-               <div className="space-y-2">
-                 <Label>Subcategory (optional)</Label>
-                 <Input value={editForm.subcategory} onChange={(e) => setEditForm({ ...editForm, subcategory: e.target.value })} placeholder="e.g., Plumbing, HVAC" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Type</Label>
+                  <Select value={editForm.type} onValueChange={(v: 'income' | 'expense') => setEditForm({ ...editForm, type: v })}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="income">
+                        <span className="flex items-center gap-2">
+                          <span className="h-2 w-2 rounded-full bg-success" />
+                          Income
+                        </span>
+                      </SelectItem>
+                      <SelectItem value="expense">
+                        <span className="flex items-center gap-2">
+                          <span className="h-2 w-2 rounded-full bg-destructive" />
+                          Expense
+                        </span>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Subcategory (optional)</Label>
+                  <Input value={editForm.subcategory} onChange={(e) => setEditForm({ ...editForm, subcategory: e.target.value })} placeholder="e.g., Plumbing, HVAC" />
                </div>
                <div className="grid grid-cols-2 gap-4">
                  <div className="space-y-2">

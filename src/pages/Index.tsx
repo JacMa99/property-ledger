@@ -70,27 +70,28 @@ export default function Index() {
       // Fetch transactions for the month
       const { data: transactions, error: txError } = await supabase
         .from('transactions')
-        .select('amount, category, needs_review')
+        .select('amount, category, type, needs_review')
         .eq('user_id', user.id)
         .gte('date', startDate)
         .lte('date', endDate);
 
       if (txError) throw txError;
 
-      // Calculate stats
+      // Calculate stats using the explicit type field
       let totalIncome = 0;
       let totalExpenses = 0;
       let needsReviewCount = 0;
 
       transactions?.forEach((tx) => {
         const amount = typeof tx.amount === 'string' ? parseFloat(tx.amount) : Number(tx.amount);
-        const categoryType = CATEGORY_CONFIG[tx.category]?.type;
+        const txType = (tx as any).type || 'expense';
         
-        if (categoryType === 'income' || amount > 0) {
+        if (txType === 'income') {
           totalIncome += Math.abs(amount);
-        } else if (categoryType === 'expense' || amount < 0) {
+        } else if (txType === 'expense') {
           totalExpenses += Math.abs(amount);
         }
+        // Transfers are not included in income/expense calculations
         
         if (tx.needs_review) needsReviewCount++;
       });

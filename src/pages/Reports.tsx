@@ -91,49 +91,49 @@
        const startDate = `${year}-${month}-01`;
        const endDate = new Date(parseInt(year), parseInt(month), 0).toISOString().split('T')[0];
  
-       // Fetch transactions for the month
-       let query = supabase
-         .from('transactions')
-         .select('amount, category, property_id, property:properties(name)')
-         .eq('user_id', user.id)
-         .gte('date', startDate)
-         .lte('date', endDate);
- 
-       if (selectedProperty !== 'all') {
-         query = query.eq('property_id', selectedProperty);
-       }
- 
-       const { data: transactions, error } = await query;
-       if (error) throw error;
- 
-       // Category breakdown
-       const categoryMap: Record<string, number> = {};
-       const propertyMap: Record<string, { income: number; expenses: number; name: string }> = {};
- 
-       transactions?.forEach((tx) => {
-         const amount = typeof tx.amount === 'string' ? parseFloat(tx.amount) : Number(tx.amount);
-         const category = tx.category;
-         const categoryType = CATEGORY_CONFIG[category]?.type || 'expense';
-         
-         // Category breakdown
-         categoryMap[category] = (categoryMap[category] || 0) + amount;
- 
-         // Property P&L
-         if (tx.property_id) {
-           if (!propertyMap[tx.property_id]) {
-             propertyMap[tx.property_id] = { 
-               income: 0, 
-               expenses: 0, 
-               name: (tx.property as { name: string } | null)?.name || 'Unknown'
-             };
-           }
-           if (categoryType === 'income' || amount > 0) {
-             propertyMap[tx.property_id].income += Math.abs(amount);
-           } else {
-             propertyMap[tx.property_id].expenses += Math.abs(amount);
-           }
-         }
-       });
+        // Fetch transactions for the month
+        let query = supabase
+          .from('transactions')
+          .select('amount, category, type, property_id, property:properties(name)')
+          .eq('user_id', user.id)
+          .gte('date', startDate)
+          .lte('date', endDate);
+
+        if (selectedProperty !== 'all') {
+          query = query.eq('property_id', selectedProperty);
+        }
+
+        const { data: transactions, error } = await query;
+        if (error) throw error;
+
+        // Category breakdown
+        const categoryMap: Record<string, number> = {};
+        const propertyMap: Record<string, { income: number; expenses: number; name: string }> = {};
+
+        transactions?.forEach((tx) => {
+          const amount = typeof tx.amount === 'string' ? parseFloat(tx.amount) : Number(tx.amount);
+          const category = tx.category;
+          const txType = (tx as any).type || 'expense';
+          
+          // Category breakdown
+          categoryMap[category] = (categoryMap[category] || 0) + amount;
+
+          // Property P&L using explicit type field
+          if (tx.property_id) {
+            if (!propertyMap[tx.property_id]) {
+              propertyMap[tx.property_id] = { 
+                income: 0, 
+                expenses: 0, 
+                name: (tx.property as { name: string } | null)?.name || 'Unknown'
+              };
+            }
+            if (txType === 'income') {
+              propertyMap[tx.property_id].income += Math.abs(amount);
+            } else if (txType === 'expense') {
+              propertyMap[tx.property_id].expenses += Math.abs(amount);
+            }
+          }
+        });
  
        setCategoryBreakdown(
          Object.entries(categoryMap)

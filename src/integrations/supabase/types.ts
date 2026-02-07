@@ -315,6 +315,7 @@ export type Database = {
           statement_upload_id: string | null
           subcategory: string | null
           tenant_id: string | null
+          type: Database["public"]["Enums"]["transaction_type"]
           unit_id: string | null
           updated_at: string
           user_id: string
@@ -333,6 +334,7 @@ export type Database = {
           statement_upload_id?: string | null
           subcategory?: string | null
           tenant_id?: string | null
+          type?: Database["public"]["Enums"]["transaction_type"]
           unit_id?: string | null
           updated_at?: string
           user_id: string
@@ -351,6 +353,7 @@ export type Database = {
           statement_upload_id?: string | null
           subcategory?: string | null
           tenant_id?: string | null
+          type?: Database["public"]["Enums"]["transaction_type"]
           unit_id?: string | null
           updated_at?: string
           user_id?: string
@@ -447,6 +450,7 @@ export type Database = {
         | "travel"
         | "transfer"
         | "uncategorized"
+      transaction_type: "income" | "expense"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -593,6 +597,7 @@ export const Constants = {
         "transfer",
         "uncategorized",
       ],
+      transaction_type: ["income", "expense"],
     },
   },
 } as const
