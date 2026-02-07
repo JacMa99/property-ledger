@@ -23,6 +23,79 @@ function normalizeHeader(header: string): string {
     .replace(/['"]/g, "");
 }
 
+// Flexible date parsing - handles DD/MM/YYYY, MM/DD/YYYY, YYYY-MM-DD and Excel serial dates
+function parseFlexibleDate(value: string | number | null): string | null {
+  if (!value) return null;
+
+  // Handle Excel serial dates (numbers between 1 and 100000 are likely dates)
+  if (typeof value === 'number' && value > 1 && value < 100000) {
+    const excelEpoch = new Date(1899, 11, 30); // December 30, 1899
+    const date = new Date(excelEpoch.getTime() + value * 86400000);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  const trimmed = String(value).trim().replace(/['"]/g, '');
+  if (!trimmed) return null;
+
+  // Try ISO format first: YYYY-MM-DD
+  const isoMatch = trimmed.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (isoMatch) {
+    const [, year, month, day] = isoMatch;
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+  }
+
+  // Try slash/dash formats: DD/MM/YYYY or MM/DD/YYYY or variants with 2-digit year
+  const slashMatch = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+  if (slashMatch) {
+    let [, first, second, yearStr] = slashMatch;
+    let year = parseInt(yearStr, 10);
+    if (year < 100) {
+      year += year < 50 ? 2000 : 1900; // 2-digit year handling
+    }
+    
+    const firstNum = parseInt(first, 10);
+    const secondNum = parseInt(second, 10);
+    
+    // Determine if DD/MM or MM/DD based on which value exceeds 12
+    let day: number, month: number;
+    if (firstNum > 12) {
+      // Must be DD/MM/YYYY (European format)
+      day = firstNum;
+      month = secondNum;
+    } else if (secondNum > 12) {
+      // Must be MM/DD/YYYY (US format)
+      month = firstNum;
+      day = secondNum;
+    } else {
+      // Ambiguous - assume DD/MM/YYYY for Latin American banks
+      day = firstNum;
+      month = secondNum;
+    }
+
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    }
+  }
+
+  // Fallback: try native Date parsing
+  try {
+    const parsed = new Date(trimmed);
+    if (!isNaN(parsed.getTime())) {
+      const year = parsed.getFullYear();
+      const month = String(parsed.getMonth() + 1).padStart(2, '0');
+      const day = String(parsed.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+  } catch {
+    // Ignore parsing errors
+  }
+
+  return null;
+}
+
 // Parse a single CSV line handling quoted fields
 function parseCSVLine(line: string): string[] {
   const values: string[] = [];
@@ -128,16 +201,9 @@ function parseCSV(csvContent: string): CSVRow[] {
       amount = credit - debit;
     }
 
-    // Parse date (supports various formats)
-    let date = '';
-    try {
-      const parsed = new Date(dateStr);
-      if (!isNaN(parsed.getTime())) {
-        date = parsed.toISOString().split('T')[0];
-      }
-    } catch {
-      continue;
-    }
+    // Parse date with flexible format detection
+    const date = parseFlexibleDate(dateStr);
+    if (!date) continue;
 
     if (date && description) {
       rows.push({ date, description, amount });
@@ -255,19 +321,24 @@ function parseCSV(csvContent: string): CSVRow[] {
          }
        }
  
-       toInsert.push({
-         user_id: userId,
-         date: row.date,
-         description: row.description,
-         amount: row.amount,
-         category,
-         property_id: propertyId,
-         unit_id: unitId,
-         statement_upload_id: upload.id,
-         needs_review: category === 'uncategorized',
-         hash,
-         raw_json: row,
-       });
+        // Determine transaction type based on amount and category
+        const isIncomeCategory = ['rent_income', 'other_income'].includes(category);
+        const transactionType = (isIncomeCategory || row.amount > 0) ? 'income' : 'expense';
+
+        toInsert.push({
+          user_id: userId,
+          date: row.date,
+          description: row.description,
+          amount: row.amount,
+          category,
+          type: transactionType,
+          property_id: propertyId,
+          unit_id: unitId,
+          statement_upload_id: upload.id,
+          needs_review: category === 'uncategorized',
+          hash,
+          raw_json: row,
+        });
      }
  
      // Insert transactions
