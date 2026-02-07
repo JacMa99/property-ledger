@@ -12,76 +12,138 @@
    amount: number;
  }
  
- function parseCSV(csvContent: string): CSVRow[] {
-   const lines = csvContent.trim().split('\n');
-   if (lines.length < 2) return [];
- 
-   const headerLine = lines[0].toLowerCase();
-   const headers = headerLine.split(',').map(h => h.trim().replace(/"/g, ''));
- 
-   // Find column indices
-   const dateIdx = headers.findIndex(h => h.includes('date') || h.includes('posted'));
-   const descIdx = headers.findIndex(h => h.includes('description') || h.includes('memo') || h.includes('payee'));
-   const amountIdx = headers.findIndex(h => h === 'amount' || h.includes('amount'));
-   const debitIdx = headers.findIndex(h => h.includes('debit') || h.includes('withdrawal'));
-   const creditIdx = headers.findIndex(h => h.includes('credit') || h.includes('deposit'));
- 
-   if (dateIdx === -1 || descIdx === -1) {
-     throw new Error('CSV must have date and description columns');
-   }
- 
-   const rows: CSVRow[] = [];
- 
-   for (let i = 1; i < lines.length; i++) {
-     const line = lines[i].trim();
-     if (!line) continue;
- 
-     // Simple CSV parsing (handles quoted fields)
-     const values: string[] = [];
-     let current = '';
-     let inQuotes = false;
-     for (const char of line) {
-       if (char === '"') {
-         inQuotes = !inQuotes;
-       } else if (char === ',' && !inQuotes) {
-         values.push(current.trim());
-         current = '';
-       } else {
-         current += char;
-       }
-     }
-     values.push(current.trim());
- 
-     const dateStr = values[dateIdx]?.replace(/"/g, '');
-     const description = values[descIdx]?.replace(/"/g, '') || '';
- 
-     let amount = 0;
-     if (amountIdx !== -1) {
-       amount = parseFloat(values[amountIdx]?.replace(/[^0-9.-]/g, '') || '0');
-     } else if (debitIdx !== -1 || creditIdx !== -1) {
-       const debit = parseFloat(values[debitIdx]?.replace(/[^0-9.-]/g, '') || '0');
-       const credit = parseFloat(values[creditIdx]?.replace(/[^0-9.-]/g, '') || '0');
-       amount = credit - debit;
-     }
- 
-     // Parse date (supports various formats)
-     let date = '';
-     try {
-       const parsed = new Date(dateStr);
-       if (!isNaN(parsed.getTime())) {
-         date = parsed.toISOString().split('T')[0];
-       }
-     } catch {
-       continue;
-     }
- 
-     if (date && description) {
-       rows.push({ date, description, amount });
-     }
-   }
- 
-   return rows;
- }
+// Normalize header by removing diacritics and lowercasing
+function normalizeHeader(header: string): string {
+  if (!header) return "";
+  return header
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // Remove diacritics
+    .replace(/['"]/g, "");
+}
+
+// Parse a single CSV line handling quoted fields
+function parseCSVLine(line: string): string[] {
+  const values: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"') {
+      if (inQuotes && i + 1 < line.length && line[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === ',' && !inQuotes) {
+      values.push(current.trim());
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  values.push(current.trim());
+  return values;
+}
+
+// Column name patterns for different languages/banks
+const DATE_PATTERNS = ['date', 'fecha', 'posted', 'transaction date', 'posting date', 'value date', 'fecha valor', 'fecha operacion'];
+const DESC_PATTERNS = ['description', 'descripcion', 'memo', 'payee', 'details', 'detalle', 'concepto', 'narrative', 'reference', 'referencia'];
+const AMOUNT_PATTERNS = ['amount', 'monto', 'importe', 'value', 'valor'];
+const DEBIT_PATTERNS = ['debit', 'debito', 'withdrawal', 'retiro', 'cargo', 'debits'];
+const CREDIT_PATTERNS = ['credit', 'credito', 'deposit', 'deposito', 'abono', 'credits'];
+
+function findColumnIndex(headers: string[], patterns: string[]): number {
+  for (let i = 0; i < headers.length; i++) {
+    const normalized = normalizeHeader(headers[i]);
+    for (const pattern of patterns) {
+      if (normalized.includes(pattern) || normalized === pattern) {
+        return i;
+      }
+    }
+  }
+  return -1;
+}
+
+function findHeaderRow(lines: string[]): { headerIndex: number; headers: string[] } {
+  // Check first 10 lines for a valid header row
+  for (let i = 0; i < Math.min(10, lines.length); i++) {
+    const cells = parseCSVLine(lines[i]);
+    const dateIdx = findColumnIndex(cells, DATE_PATTERNS);
+    const descIdx = findColumnIndex(cells, DESC_PATTERNS);
+    
+    if (dateIdx !== -1 && descIdx !== -1) {
+      return { headerIndex: i, headers: cells };
+    }
+  }
+  return { headerIndex: -1, headers: [] };
+}
+
+function parseCSV(csvContent: string): CSVRow[] {
+  const lines = csvContent.trim().split('\n');
+  if (lines.length < 2) return [];
+
+  // Find the header row dynamically
+  const { headerIndex, headers } = findHeaderRow(lines);
+  
+  if (headerIndex === -1) {
+    console.log('Available headers in first line:', lines[0]);
+    throw new Error('CSV must have date and description columns. Supported formats: English (Date, Description, Amount) or Spanish (Fecha, Descripción, Monto)');
+  }
+
+  console.log(`Found headers at row ${headerIndex}:`, headers);
+
+  // Find column indices using patterns
+  const dateIdx = findColumnIndex(headers, DATE_PATTERNS);
+  const descIdx = findColumnIndex(headers, DESC_PATTERNS);
+  const amountIdx = findColumnIndex(headers, AMOUNT_PATTERNS);
+  const debitIdx = findColumnIndex(headers, DEBIT_PATTERNS);
+  const creditIdx = findColumnIndex(headers, CREDIT_PATTERNS);
+
+  console.log(`Column mapping - Date: ${dateIdx}, Desc: ${descIdx}, Amount: ${amountIdx}, Debit: ${debitIdx}, Credit: ${creditIdx}`);
+
+  const rows: CSVRow[] = [];
+
+  // Start from the row after the header
+  for (let i = headerIndex + 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    const values = parseCSVLine(line);
+
+    const dateStr = values[dateIdx]?.replace(/"/g, '') || '';
+    const description = values[descIdx]?.replace(/"/g, '') || '';
+
+    let amount = 0;
+    if (amountIdx !== -1 && values[amountIdx]) {
+      amount = parseFloat(values[amountIdx]?.replace(/[^0-9.-]/g, '') || '0');
+    } else if (debitIdx !== -1 || creditIdx !== -1) {
+      const debit = parseFloat(values[debitIdx]?.replace(/[^0-9.-]/g, '') || '0');
+      const credit = parseFloat(values[creditIdx]?.replace(/[^0-9.-]/g, '') || '0');
+      amount = credit - debit;
+    }
+
+    // Parse date (supports various formats)
+    let date = '';
+    try {
+      const parsed = new Date(dateStr);
+      if (!isNaN(parsed.getTime())) {
+        date = parsed.toISOString().split('T')[0];
+      }
+    } catch {
+      continue;
+    }
+
+    if (date && description) {
+      rows.push({ date, description, amount });
+    }
+  }
+
+  return rows;
+}
  
  function generateHash(row: CSVRow): string {
    const str = `${row.date}|${row.description}|${row.amount.toFixed(2)}`;
