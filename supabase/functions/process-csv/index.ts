@@ -69,11 +69,13 @@ function findColumnIndex(headers: string[], patterns: string[]): number {
 }
 
 function findHeaderRow(lines: string[]): { headerIndex: number; headers: string[] } {
-  // Check first 10 lines for a valid header row
-  for (let i = 0; i < Math.min(10, lines.length); i++) {
+  // Check first 30 lines for a valid header row (bank CSVs often have metadata rows)
+  for (let i = 0; i < Math.min(30, lines.length); i++) {
     const cells = parseCSVLine(lines[i]);
     const dateIdx = findColumnIndex(cells, DATE_PATTERNS);
     const descIdx = findColumnIndex(cells, DESC_PATTERNS);
+    
+    console.log(`Row ${i}: ${cells.slice(0, 3).join(', ')} | Date: ${dateIdx}, Desc: ${descIdx}`);
     
     if (dateIdx !== -1 && descIdx !== -1) {
       return { headerIndex: i, headers: cells };
