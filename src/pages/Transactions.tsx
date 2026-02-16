@@ -382,7 +382,7 @@ interface Transaction {
                         {tx.unit?.label && ` / ${tx.unit.label}`}
                       </TableCell>
                       <TableCell className="text-right">
-                        <MoneyAmount amount={tx.amount} />
+                        <MoneyAmount amount={tx.type === 'expense' ? -Math.abs(tx.amount) : Math.abs(tx.amount)} />
                       </TableCell>
                       <TableCell>
                         <div className="flex gap-1">

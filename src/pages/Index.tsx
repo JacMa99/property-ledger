@@ -36,6 +36,7 @@ interface RecentTransaction {
   description: string;
   amount: number;
   category: string;
+  type: 'income' | 'expense';
 }
 
 export default function Index() {
@@ -105,7 +106,7 @@ export default function Index() {
       // Fetch recent transactions
       const { data: recent, error: recentError } = await supabase
         .from('transactions')
-        .select('id, date, description, amount, category')
+        .select('id, date, description, amount, category, type')
         .eq('user_id', user.id)
         .order('date', { ascending: false })
         .limit(5);
@@ -123,6 +124,7 @@ export default function Index() {
       setRecentTransactions(recent?.map(tx => ({
         ...tx,
         amount: typeof tx.amount === 'string' ? parseFloat(tx.amount) : Number(tx.amount),
+        type: (tx as any).type || 'expense',
       })) || []);
 
     } catch (error) {
@@ -247,7 +249,7 @@ export default function Index() {
                           <CategoryBadge category={tx.category} />
                         </div>
                       </div>
-                      <MoneyAmount amount={tx.amount} className="font-medium" />
+                      <MoneyAmount amount={tx.type === 'expense' ? -Math.abs(tx.amount) : Math.abs(tx.amount)} className="font-medium" />
                     </div>
                   ))}
                 </div>
