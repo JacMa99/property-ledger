@@ -1,18 +1,19 @@
  import { ReactNode } from 'react';
  import { Link, useLocation, useNavigate } from 'react-router-dom';
- import { 
-   LayoutDashboard, 
-   Building2, 
-   ArrowUpDown, 
-   FileText, 
-   Settings, 
-   Upload, 
-   LogOut,
-   ListFilter,
-   BarChart3,
-   Menu,
-   X
- } from 'lucide-react';
+import { 
+  LayoutDashboard, 
+  Building2, 
+  ArrowUpDown, 
+  FileText, 
+  Settings, 
+  Upload, 
+  LogOut,
+  ListFilter,
+  BarChart3,
+  Menu,
+  X,
+  FolderOpen
+} from 'lucide-react';
  import { useAuth } from '@/hooks/useAuth';
  import { Button } from '@/components/ui/button';
  import { useState } from 'react';
@@ -22,14 +23,15 @@
    children: ReactNode;
  }
  
- const navigation = [
-   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
-   { name: 'Properties', href: '/properties', icon: Building2 },
-   { name: 'Transactions', href: '/transactions', icon: ArrowUpDown },
-   { name: 'Upload', href: '/upload', icon: Upload },
-   { name: 'Rules', href: '/rules', icon: ListFilter },
-   { name: 'Reports', href: '/reports', icon: BarChart3 },
- ];
+const navigation = [
+  { name: 'Dashboard', href: '/', icon: LayoutDashboard },
+  { name: 'Properties', href: '/properties', icon: Building2 },
+  { name: 'Transactions', href: '/transactions', icon: ArrowUpDown },
+  { name: 'Upload', href: '/upload', icon: Upload },
+  { name: 'Rules', href: '/rules', icon: ListFilter },
+  { name: 'Projects', href: '/projects', icon: FolderOpen },
+  { name: 'Reports', href: '/reports', icon: BarChart3 },
+];
  
  export function AppLayout({ children }: AppLayoutProps) {
    const { user, signOut } = useAuth();

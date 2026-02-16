@@ -41,6 +41,39 @@ export type Database = {
         }
         Relationships: []
       }
+      projects: {
+        Row: {
+          budget: number | null
+          created_at: string
+          description: string | null
+          id: string
+          is_active: boolean
+          name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          budget?: number | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          budget?: number | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       properties: {
         Row: {
           address: string | null
@@ -191,6 +224,7 @@ export type Database = {
           id: string
           processed_count: number | null
           row_count: number | null
+          source_type: Database["public"]["Enums"]["upload_source_type"]
           status: Database["public"]["Enums"]["statement_upload_status"]
           uploaded_at: string
           user_id: string
@@ -203,6 +237,7 @@ export type Database = {
           id?: string
           processed_count?: number | null
           row_count?: number | null
+          source_type?: Database["public"]["Enums"]["upload_source_type"]
           status?: Database["public"]["Enums"]["statement_upload_status"]
           uploaded_at?: string
           user_id: string
@@ -215,6 +250,7 @@ export type Database = {
           id?: string
           processed_count?: number | null
           row_count?: number | null
+          source_type?: Database["public"]["Enums"]["upload_source_type"]
           status?: Database["public"]["Enums"]["statement_upload_status"]
           uploaded_at?: string
           user_id?: string
@@ -310,6 +346,8 @@ export type Database = {
           hash: string
           id: string
           needs_review: boolean
+          parent_transaction_id: string | null
+          project_id: string | null
           property_id: string | null
           raw_json: Json | null
           statement_upload_id: string | null
@@ -329,6 +367,8 @@ export type Database = {
           hash: string
           id?: string
           needs_review?: boolean
+          parent_transaction_id?: string | null
+          project_id?: string | null
           property_id?: string | null
           raw_json?: Json | null
           statement_upload_id?: string | null
@@ -348,6 +388,8 @@ export type Database = {
           hash?: string
           id?: string
           needs_review?: boolean
+          parent_transaction_id?: string | null
+          project_id?: string | null
           property_id?: string | null
           raw_json?: Json | null
           statement_upload_id?: string | null
@@ -359,6 +401,20 @@ export type Database = {
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "transactions_parent_transaction_id_fkey"
+            columns: ["parent_transaction_id"]
+            isOneToOne: false
+            referencedRelation: "transactions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "transactions_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "transactions_property_id_fkey"
             columns: ["property_id"]
@@ -451,6 +507,7 @@ export type Database = {
         | "transfer"
         | "uncategorized"
       transaction_type: "income" | "expense"
+      upload_source_type: "bank" | "credit_card"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -598,6 +655,7 @@ export const Constants = {
         "uncategorized",
       ],
       transaction_type: ["income", "expense"],
+      upload_source_type: ["bank", "credit_card"],
     },
   },
 } as const
