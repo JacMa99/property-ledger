@@ -92,12 +92,13 @@
        const endDate = new Date(parseInt(year), parseInt(month), 0).toISOString().split('T')[0];
  
         // Fetch transactions for the month
-        let query = supabase
-          .from('transactions')
-          .select('amount, category, type, property_id, property:properties(name)')
-          .eq('user_id', user.id)
-          .gte('date', startDate)
-          .lte('date', endDate);
+         let query = supabase
+           .from('transactions')
+           .select('amount, category, type, property_id, parent_transaction_id, property:properties(name)')
+           .eq('user_id', user.id)
+           .gte('date', startDate)
+           .lte('date', endDate)
+           .is('parent_transaction_id', null);
 
         if (selectedProperty !== 'all') {
           query = query.eq('property_id', selectedProperty);
@@ -115,8 +116,9 @@
           const category = tx.category;
           const txType = (tx as any).type || 'expense';
           
-          // Category breakdown
-          categoryMap[category] = (categoryMap[category] || 0) + amount;
+          // Category breakdown: income positive, expense negative
+          const signedAmount = txType === 'income' ? Math.abs(amount) : -Math.abs(amount);
+          categoryMap[category] = (categoryMap[category] || 0) + signedAmount;
 
           // Property P&L using explicit type field
           if (tx.property_id) {
@@ -161,21 +163,22 @@
      }
    }
  
-   const totals = useMemo(() => {
-     let income = 0;
-     let expenses = 0;
-     
-     categoryBreakdown.forEach(({ category, total }) => {
-       const categoryType = CATEGORY_CONFIG[category]?.type;
-       if (categoryType === 'income' || total > 0) {
-         income += Math.abs(total);
-       } else if (categoryType !== 'transfer') {
-         expenses += Math.abs(total);
-       }
-     });
-     
-     return { income, expenses, net: income - expenses };
-   }, [categoryBreakdown]);
+    const totals = useMemo(() => {
+      let income = 0;
+      let expenses = 0;
+      
+      categoryBreakdown.forEach(({ category, total }) => {
+        const categoryType = CATEGORY_CONFIG[category]?.type;
+        if (categoryType === 'income') {
+          income += Math.abs(total);
+        } else if (categoryType === 'expense') {
+          expenses += Math.abs(total);
+        }
+        // transfers are excluded from totals
+      });
+      
+      return { income, expenses, net: income - expenses };
+    }, [categoryBreakdown]);
  
    function exportCSV() {
      const headers = ['Category', 'Amount'];
