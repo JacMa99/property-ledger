@@ -112,6 +112,31 @@ function findColumnIndex(headers: string[], patterns: string[]): number {
   return -1;
 }
 
+// Returns all matching column indices for a pattern list (e.g. multiple description columns)
+function findAllColumnIndices(headers: string[], patterns: string[]): number[] {
+  const indices: number[] = [];
+  for (let i = 0; i < headers.length; i++) {
+    const normalized = normalizeHeader(headers[i]);
+    for (const pattern of patterns) {
+      if (normalized.includes(pattern) || normalized === pattern) {
+        indices.push(i);
+        break;
+      }
+    }
+  }
+  return indices;
+}
+
+// CR/DT type-indicator values used in some Spanish bank CC exports
+const CR_DT_VALUES = new Set(['cr', 'dt', 'credito', 'debito', 'crédito', 'débito', 'credit', 'debit']);
+
+function isCRDTColumn(values: string[], colIndex: number): boolean {
+  // Sample up to 20 data rows to see if all non-empty values are CR/DT indicators
+  const samples = values.filter(v => v).slice(0, 20);
+  if (samples.length === 0) return false;
+  return samples.every(v => CR_DT_VALUES.has(v.toLowerCase().trim()));
+}
+
 function findHeaderRow(lines: string[]): { headerIndex: number; headers: string[] } {
   for (let i = 0; i < Math.min(30, lines.length); i++) {
     const cells = parseCSVLine(lines[i]);
@@ -132,10 +157,25 @@ function parseCSV(csvContent: string): CSVRow[] {
   }
 
   const dateIdx = findColumnIndex(headers, DATE_PATTERNS);
-  const descIdx = findColumnIndex(headers, DESC_PATTERNS);
+  const descIndices = findAllColumnIndices(headers, DESC_PATTERNS);
   const amountIdx = findColumnIndex(headers, AMOUNT_PATTERNS);
   const debitIdx = findColumnIndex(headers, DEBIT_PATTERNS);
   const creditIdx = findColumnIndex(headers, CREDIT_PATTERNS);
+
+  // Detect whether the first description column is a CR/DT type indicator.
+  // Sample all data rows for that column to decide.
+  let crDtColIdx = -1;
+  let realDescIdx = descIndices[0] ?? -1;
+
+  if (descIndices.length >= 2) {
+    const dataLines = lines.slice(headerIndex + 1).filter(l => l.trim());
+    const firstDescSamples = dataLines.map(l => parseCSVLine(l)[descIndices[0]]?.replace(/"/g, '').trim() ?? '');
+    if (isCRDTColumn(firstDescSamples, descIndices[0])) {
+      crDtColIdx = descIndices[0];
+      realDescIdx = descIndices[1];
+      console.log(`Detected CR/DT indicator column at index ${crDtColIdx}; using column ${realDescIdx} as description`);
+    }
+  }
 
   const rows: CSVRow[] = [];
   for (let i = headerIndex + 1; i < lines.length; i++) {
@@ -144,11 +184,21 @@ function parseCSV(csvContent: string): CSVRow[] {
 
     const values = parseCSVLine(line);
     const dateStr = values[dateIdx]?.replace(/"/g, '') || '';
-    const description = values[descIdx]?.replace(/"/g, '') || '';
+    const description = values[realDescIdx]?.replace(/"/g, '') || '';
+
+    // If we have a CR/DT column, use it to determine sign when no separate debit/credit columns exist
+    const crDtValue = crDtColIdx !== -1 ? (values[crDtColIdx]?.replace(/"/g, '').toLowerCase().trim() || '') : '';
 
     let amount = 0;
     if (amountIdx !== -1 && values[amountIdx]) {
-      amount = parseFloat(values[amountIdx]?.replace(/[^0-9.-]/g, '') || '0');
+      const rawAmount = parseFloat(values[amountIdx]?.replace(/[^0-9.-]/g, '') || '0');
+      if (crDtColIdx !== -1 && debitIdx === -1 && creditIdx === -1) {
+        // CR = money coming in (positive), DT = money going out (negative)
+        const isDebit = crDtValue === 'dt' || crDtValue === 'debito' || crDtValue === 'débito' || crDtValue === 'debit';
+        amount = isDebit ? -Math.abs(rawAmount) : Math.abs(rawAmount);
+      } else {
+        amount = rawAmount;
+      }
     } else if (debitIdx !== -1 || creditIdx !== -1) {
       const debit = parseFloat(values[debitIdx]?.replace(/[^0-9.-]/g, '') || '0');
       const credit = parseFloat(values[creditIdx]?.replace(/[^0-9.-]/g, '') || '0');
