@@ -163,18 +163,18 @@
      }
    }
  
-    const totals = useMemo(() => {
+   const totals = useMemo(() => {
       let income = 0;
       let expenses = 0;
       
-      categoryBreakdown.forEach(({ category, total }) => {
-        const categoryType = CATEGORY_CONFIG[category]?.type;
-        if (categoryType === 'income') {
-          income += Math.abs(total);
-        } else if (categoryType === 'expense') {
+      categoryBreakdown.forEach(({ total }) => {
+        // Use the sign of the amount: positive = income, negative = expense
+        // This reflects the actual transaction type field, not just category config
+        if (total > 0) {
+          income += total;
+        } else if (total < 0) {
           expenses += Math.abs(total);
         }
-        // transfers are excluded from totals
       });
       
       return { income, expenses, net: income - expenses };
