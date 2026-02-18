@@ -74,7 +74,8 @@ export default function Index() {
         .select('amount, category, type, needs_review')
         .eq('user_id', user.id)
         .gte('date', startDate)
-        .lte('date', endDate);
+        .lte('date', endDate)
+        .is('parent_transaction_id', null);
 
       if (txError) throw txError;
 
