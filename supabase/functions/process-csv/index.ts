@@ -97,10 +97,20 @@ function parseCSVLine(line: string): string[] {
 }
 
 const DATE_PATTERNS = ['date', 'fecha', 'posted', 'transaction date', 'posting date', 'value date', 'fecha valor', 'fecha operacion'];
-const DESC_PATTERNS = ['description', 'descripcion', 'memo', 'payee', 'details', 'detalle', 'concepto', 'narrative', 'reference', 'referencia'];
+// Description patterns — intentionally excludes 'reference'/'referencia' to avoid
+// matching "No. Referencia" (a reference number column) as a description column.
+const DESC_PATTERNS = ['description', 'descripcion', 'memo', 'payee', 'details', 'detalle', 'concepto', 'narrative'];
 const AMOUNT_PATTERNS = ['amount', 'monto', 'importe', 'value', 'valor'];
 const DEBIT_PATTERNS = ['debit', 'debito', 'withdrawal', 'retiro', 'cargo', 'debits'];
 const CREDIT_PATTERNS = ['credit', 'credito', 'deposit', 'deposito', 'abono', 'credits'];
+
+// Headers that look like description columns by name but are NOT merchant descriptions.
+// Used to exclude false positives when scanning for description columns.
+const DESC_EXCLUSIONS = ['referencia', 'reference', 'no.', 'numero', 'number', 'folio', 'id'];
+
+function isExcludedDescHeader(normalized: string): boolean {
+  return DESC_EXCLUSIONS.some(excl => normalized.includes(excl));
+}
 
 function findColumnIndex(headers: string[], patterns: string[]): number {
   for (let i = 0; i < headers.length; i++) {
@@ -112,19 +122,40 @@ function findColumnIndex(headers: string[], patterns: string[]): number {
   return -1;
 }
 
-// Returns all matching column indices for a pattern list (e.g. multiple description columns)
+// Returns all description-like column indices, ordered by match quality:
+//   1. Exact match to "descripcion" / "description" (highest priority)
+//   2. Other DESC_PATTERNS matches
+// Columns that match DESC_EXCLUSIONS are always skipped.
 function findAllColumnIndices(headers: string[], patterns: string[]): number[] {
-  const indices: number[] = [];
+  const exact: number[] = [];
+  const loose: number[] = [];
+
   for (let i = 0; i < headers.length; i++) {
     const normalized = normalizeHeader(headers[i]);
+
+    // Skip known non-description columns (reference numbers, IDs, etc.)
+    if (isExcludedDescHeader(normalized)) continue;
+
+    let matched = false;
     for (const pattern of patterns) {
-      if (normalized.includes(pattern) || normalized === pattern) {
-        indices.push(i);
+      if (normalized === pattern) {
+        exact.push(i);   // exact match → highest priority
+        matched = true;
         break;
       }
     }
+    if (!matched) {
+      for (const pattern of patterns) {
+        if (normalized.includes(pattern)) {
+          loose.push(i);
+          break;
+        }
+      }
+    }
   }
-  return indices;
+
+  // Return exact matches first, then loose matches
+  return [...exact, ...loose];
 }
 
 // CR/DT type-indicator values used in some Spanish bank CC exports
