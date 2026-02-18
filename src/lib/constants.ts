@@ -18,11 +18,33 @@ export const CATEGORY_CONFIG: Record<string, { label: string; color: string; typ
   uncategorized: { label: 'Uncategorized', color: 'pill-warning', type: 'expense' },
 };
  
- export const CATEGORY_OPTIONS = Object.entries(CATEGORY_CONFIG).map(([value, config]) => ({
-   value,
-   label: config.label,
-   type: config.type,
- }));
+export const CATEGORY_OPTIONS = Object.entries(CATEGORY_CONFIG).map(([value, config]) => ({
+  value,
+  label: config.label,
+  type: config.type,
+}));
+
+// Transaction type display config
+export const TYPE_CONFIG: Record<string, { label: string; color: string }> = {
+  income: { label: 'Income', color: 'pill-income' },
+  expense: { label: 'Expense', color: 'pill-expense' },
+  transfer: { label: 'Transfer', color: 'pill-transfer' },
+  cc_payment: { label: 'CC Payment', color: 'pill-transfer' },
+};
+
+export const TYPE_OPTIONS = Object.entries(TYPE_CONFIG).map(([value, config]) => ({
+  value,
+  label: config.label,
+}));
+
+const INCOME_CATEGORIES = new Set(['rent_income', 'other_income']);
+
+export function getDefaultTypeForCategory(category: string): string {
+  if (INCOME_CATEGORIES.has(category)) return 'income';
+  if (category === 'credit_card_payment') return 'cc_payment';
+  if (category === 'transfer') return 'transfer';
+  return 'expense';
+}
  
  // Format currency
  export function formatCurrency(amount: number): string {

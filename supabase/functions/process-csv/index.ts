@@ -3,7 +3,7 @@ import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
 interface CSVRow {
@@ -172,7 +172,7 @@ const CATEGORY_KEYWORDS: { category: string; keywords: string[] }[] = [
   { category: 'utilities', keywords: ['electric', 'electricity', 'gas bill', 'water bill', 'sewer', 'trash', 'waste', 'utility', 'power company', 'energy', 'comcast', 'spectrum', 'internet', 'cable'] },
   { category: 'maintenance', keywords: ['repair', 'maintenance', 'plumber', 'plumbing', 'hvac', 'landscap', 'lawn', 'pest control', 'handyman', 'cleaning', 'roofing', 'painting', 'contractor'] },
   { category: 'management_fee', keywords: ['management fee', 'property management', 'mgmt fee'] },
-  { category: 'credit_card_payment', keywords: ['credit card', 'card payment', 'chase card', 'amex', 'visa payment', 'mastercard', 'citi card', 'capital one', 'discover card'] },
+  { category: 'credit_card_payment', keywords: ['credit card', 'card payment', 'chase card', 'amex', 'american express', 'visa payment', 'mastercard', 'citi card', 'capital one', 'discover card', 'cc payment', 'payment to'] },
   { category: 'cash_withdrawal', keywords: ['atm', 'cash withdrawal', 'cash back', 'withdraw'] },
   { category: 'groceries', keywords: ['grocery', 'groceries', 'supermarket', 'walmart', 'costco', 'kroger', 'safeway', 'aldi', 'trader joe', 'whole foods', 'publix', 'heb', 'food lion'] },
   { category: 'legal', keywords: ['attorney', 'lawyer', 'legal fee', 'law firm', 'notary', 'court'] },
@@ -182,17 +182,35 @@ const CATEGORY_KEYWORDS: { category: string; keywords: string[] }[] = [
 ];
 
 const INCOME_CATEGORIES = new Set(['rent_income', 'other_income']);
+const CC_PAYMENT_KEYWORDS = ['payment', 'thank you', 'payment received', 'autopay', 'online payment', 'payment credit', 'pymt'];
 
-function autoDetectCategory(description: string): { category: string; confidence: 'high' | 'low' } | null {
+function autoDetectCategory(description: string): string | null {
   const desc = description.toLowerCase();
   for (const { category, keywords } of CATEGORY_KEYWORDS) {
     for (const kw of keywords) {
-      if (desc.includes(kw)) {
-        return { category, confidence: 'high' };
-      }
+      if (desc.includes(kw)) return category;
     }
   }
   return null;
+}
+
+function getTypeForCategory(category: string, sourceType: string, amount: number): string {
+  if (category === 'credit_card_payment') return 'cc_payment';
+  if (category === 'transfer') return 'transfer';
+  if (INCOME_CATEGORIES.has(category)) return 'income';
+  // CC statement transactions are expenses (except payment credits handled separately)
+  if (sourceType === 'credit_card') return 'expense';
+  // Bank: positive uncategorized amounts might be income
+  if (category === 'uncategorized' && amount > 0) return 'income';
+  return 'expense';
+}
+
+function isCCPaymentCredit(description: string, amount: number, sourceType: string): boolean {
+  if (sourceType !== 'credit_card') return false;
+  // On CC statements, payment credits are positive amounts with payment-related descriptions
+  if (amount <= 0) return false;
+  const desc = description.toLowerCase();
+  return CC_PAYMENT_KEYWORDS.some(kw => desc.includes(kw));
 }
 
 function generateHash(row: CSVRow): string {
@@ -297,44 +315,208 @@ serve(async (req) => {
     }
     const userId = authData.user.id;
 
-    const { filename, csvContent, sourceType = 'bank' } = await req.json();
-    console.log(`Processing CSV: ${filename} (${sourceType}) for user: ${userId}`);
+    const body = await req.json();
+    const mode = body.mode || 'direct';
 
-    // Create upload record
+    // ── PREVIEW MODE ──
+    if (mode === 'preview') {
+      const { csvContent, sourceType = 'bank' } = body;
+      console.log(`Preview mode: parsing CSV (${sourceType})`);
+
+      const rows = parseCSV(csvContent);
+
+      // Get existing hashes for duplicate detection
+      const { data: existingTx } = await supabase
+        .from('transactions').select('hash').eq('user_id', userId);
+      const existingHashes = new Set(existingTx?.map((t: any) => t.hash) || []);
+
+      // Get user rules
+      const { data: rules } = await supabase
+        .from('rules').select('*').eq('user_id', userId).eq('is_active', true)
+        .order('priority', { ascending: false });
+
+      const previewRows = rows.map(row => {
+        const hash = generateHash(row);
+        const isDuplicate = existingHashes.has(hash);
+
+        let category = 'uncategorized';
+        let matchedByRule = false;
+
+        // Priority 1: User rules
+        for (const rule of rules || []) {
+          let matches = false;
+          if (rule.match_type === 'contains') {
+            matches = row.description.toLowerCase().includes(rule.pattern.toLowerCase());
+          } else if (rule.match_type === 'regex') {
+            try { matches = new RegExp(rule.pattern, 'i').test(row.description); } catch {}
+          }
+          if (matches) {
+            category = rule.category;
+            matchedByRule = true;
+            break;
+          }
+        }
+
+        // Priority 2: Keyword detection
+        if (!matchedByRule) {
+          const detected = autoDetectCategory(row.description);
+          if (detected) category = detected;
+        }
+
+        // Check if this is a CC payment credit (on CC statements)
+        const ccPaymentCredit = isCCPaymentCredit(row.description, row.amount, sourceType);
+        if (ccPaymentCredit) {
+          category = 'credit_card_payment';
+        }
+
+        const type = ccPaymentCredit ? 'cc_payment' : getTypeForCategory(category, sourceType, row.amount);
+
+        return {
+          date: row.date,
+          description: row.description,
+          amount: row.amount,
+          hash,
+          isDuplicate,
+          suggestedCategory: category,
+          suggestedType: type,
+          needsReview: category === 'uncategorized',
+          isCCPayment: category === 'credit_card_payment' || ccPaymentCredit,
+        };
+      });
+
+      return new Response(JSON.stringify({ rows: previewRows }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // ── COMMIT MODE ──
+    if (mode === 'commit') {
+      const { filename, sourceType = 'bank', accountId, rows: reviewedRows } = body;
+      console.log(`Commit mode: ${reviewedRows.length} rows for ${filename} (${sourceType})`);
+
+      // Create upload record
+      const { data: upload, error: uploadError } = await supabase
+        .from('statement_uploads')
+        .insert({
+          user_id: userId,
+          filename,
+          status: 'processing',
+          source_type: sourceType,
+          account_id: accountId || null,
+        })
+        .select().single();
+      if (uploadError) throw uploadError;
+
+      // Check for remaining duplicates (in case preview was stale)
+      const { data: existingTx } = await supabase
+        .from('transactions').select('hash').eq('user_id', userId);
+      const existingHashes = new Set(existingTx?.map((t: any) => t.hash) || []);
+
+      const toInsert = [];
+      let duplicateCount = 0;
+
+      for (const row of reviewedRows) {
+        if (existingHashes.has(row.hash)) { duplicateCount++; continue; }
+        existingHashes.add(row.hash);
+
+        toInsert.push({
+          user_id: userId,
+          date: row.date,
+          description: row.description,
+          amount: row.amount,
+          category: row.category,
+          type: row.type,
+          property_id: row.propertyId || null,
+          unit_id: row.unitId || null,
+          account_id: accountId || null,
+          statement_upload_id: upload.id,
+          needs_review: row.needsReview || row.category === 'uncategorized',
+          hash: row.hash,
+          raw_json: { date: row.date, description: row.description, amount: row.amount },
+        });
+      }
+
+      if (toInsert.length > 0) {
+        const { error: insertError } = await supabase.from('transactions').insert(toInsert);
+        if (insertError) throw insertError;
+      }
+
+      // ── CC Payment Linking ──
+      let linkedCount = 0;
+      if (sourceType === 'credit_card') {
+        // Find CC payment credit transactions we just inserted
+        const { data: ccCredits } = await supabase
+          .from('transactions')
+          .select('id, amount, date')
+          .eq('statement_upload_id', upload.id)
+          .eq('type', 'cc_payment');
+
+        for (const credit of ccCredits || []) {
+          const creditAmount = Math.abs(typeof credit.amount === 'string' ? parseFloat(credit.amount) : Number(credit.amount));
+          const creditDate = new Date(credit.date);
+
+          // Find matching unlinked bank cc_payment
+          const { data: bankPayments } = await supabase
+            .from('transactions')
+            .select('id, amount, date')
+            .eq('user_id', userId)
+            .eq('type', 'cc_payment')
+            .is('linked_transaction_id', null)
+            .neq('id', credit.id);
+
+          for (const bankTx of bankPayments || []) {
+            const bankAmount = Math.abs(typeof bankTx.amount === 'string' ? parseFloat(bankTx.amount) : Number(bankTx.amount));
+            const bankDate = new Date(bankTx.date);
+            const daysDiff = Math.abs((creditDate.getTime() - bankDate.getTime()) / 86400000);
+
+            if (Math.abs(bankAmount - creditAmount) / creditAmount < 0.05 && daysDiff <= 3) {
+              // Link both sides
+              await supabase.from('transactions').update({ linked_transaction_id: bankTx.id }).eq('id', credit.id);
+              await supabase.from('transactions').update({ linked_transaction_id: credit.id }).eq('id', bankTx.id);
+              linkedCount++;
+              break;
+            }
+          }
+        }
+      }
+
+      // Update upload record
+      await supabase
+        .from('statement_uploads')
+        .update({
+          status: 'completed',
+          row_count: reviewedRows.length,
+          processed_count: toInsert.length,
+          duplicate_count: duplicateCount,
+          completed_at: new Date().toISOString(),
+        })
+        .eq('id', upload.id);
+
+      console.log(`Committed: ${toInsert.length} inserted, ${duplicateCount} dupes, ${linkedCount} linked`);
+
+      return new Response(JSON.stringify({
+        success: true,
+        processedCount: toInsert.length,
+        duplicateCount,
+        totalRows: reviewedRows.length,
+        linkedCount,
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // ── LEGACY DIRECT MODE (backward compat) ──
+    const { filename, csvContent, sourceType = 'bank', accountId } = body;
+    console.log(`Direct mode: ${filename} (${sourceType})`);
+
     const { data: upload, error: uploadError } = await supabase
       .from('statement_uploads')
-      .insert({ user_id: userId, filename, status: 'processing', source_type: sourceType })
-      .select()
-      .single();
-
+      .insert({ user_id: userId, filename, status: 'processing', source_type: sourceType, account_id: accountId || null })
+      .select().single();
     if (uploadError) throw uploadError;
 
     const rows = parseCSV(csvContent);
-    console.log(`Parsed ${rows.length} rows`);
-
-    // Get existing hashes
-    const { data: existingTx } = await supabase
-      .from('transactions')
-      .select('hash')
-      .eq('user_id', userId);
+    const { data: existingTx } = await supabase.from('transactions').select('hash').eq('user_id', userId);
     const existingHashes = new Set(existingTx?.map((t: any) => t.hash) || []);
-
-    // Get user's rules
-    const { data: rules } = await supabase
-      .from('rules')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('is_active', true)
-      .order('priority', { ascending: false });
-
-    // For credit card imports, try to find the parent bank payment
-    let parentTransactionId: string | null = null;
-    let linkedToPayment = false;
-    if (sourceType === 'credit_card') {
-      parentTransactionId = await findParentPayment(supabase, userId, rows);
-      linkedToPayment = !!parentTransactionId;
-      console.log(`Parent payment: ${parentTransactionId || 'not found'}`);
-    }
+    const { data: rules } = await supabase.from('rules').select('*').eq('user_id', userId).eq('is_active', true).order('priority', { ascending: false });
 
     const toInsert = [];
     let duplicateCount = 0;
@@ -348,53 +530,28 @@ serve(async (req) => {
       let propertyId = null;
       let unitId = null;
       let matchedByRule = false;
-      
-      // Priority 1: User-defined rules
+
       for (const rule of rules || []) {
         let matches = false;
-        if (rule.match_type === 'contains') {
-          matches = row.description.toLowerCase().includes(rule.pattern.toLowerCase());
-        } else if (rule.match_type === 'regex') {
-          try { matches = new RegExp(rule.pattern, 'i').test(row.description); } catch {}
-        }
-        if (matches) {
-          category = rule.category;
-          propertyId = rule.property_id;
-          unitId = rule.unit_id;
-          matchedByRule = true;
-          break;
-        }
+        if (rule.match_type === 'contains') matches = row.description.toLowerCase().includes(rule.pattern.toLowerCase());
+        else if (rule.match_type === 'regex') { try { matches = new RegExp(rule.pattern, 'i').test(row.description); } catch {} }
+        if (matches) { category = rule.category; propertyId = rule.property_id; unitId = rule.unit_id; matchedByRule = true; break; }
       }
 
-      // Priority 2: Keyword-based auto-detection
       if (!matchedByRule) {
         const detected = autoDetectCategory(row.description);
-        if (detected && detected.confidence === 'high') {
-          category = detected.category;
-        }
-        // Low confidence or no match → stays uncategorized, needs review
+        if (detected) category = detected;
       }
 
-      // Determine type: income categories → income, everything else → expense
-      // Credit card transactions are always expenses
-      const transactionType = sourceType === 'credit_card' 
-        ? 'expense' 
-        : (INCOME_CATEGORIES.has(category) ? 'income' : (row.amount > 0 && category === 'uncategorized' ? 'income' : 'expense'));
+      const ccPaymentCredit = isCCPaymentCredit(row.description, row.amount, sourceType);
+      if (ccPaymentCredit) category = 'credit_card_payment';
+      const transactionType = ccPaymentCredit ? 'cc_payment' : getTypeForCategory(category, sourceType, row.amount);
 
       toInsert.push({
-        user_id: userId,
-        date: row.date,
-        description: row.description,
-        amount: row.amount,
-        category,
-        type: transactionType,
-        property_id: propertyId,
-        unit_id: unitId,
-        statement_upload_id: upload.id,
-        parent_transaction_id: parentTransactionId,
-        needs_review: category === 'uncategorized',
-        hash,
-        raw_json: row,
+        user_id: userId, date: row.date, description: row.description, amount: row.amount,
+        category, type: transactionType, property_id: propertyId, unit_id: unitId,
+        account_id: accountId || null, statement_upload_id: upload.id,
+        needs_review: category === 'uncategorized', hash, raw_json: row,
       });
     }
 
@@ -403,26 +560,13 @@ serve(async (req) => {
       if (insertError) throw insertError;
     }
 
-    await supabase
-      .from('statement_uploads')
-      .update({
-        status: 'completed',
-        row_count: rows.length,
-        processed_count: toInsert.length,
-        duplicate_count: duplicateCount,
-        completed_at: new Date().toISOString(),
-      })
-      .eq('id', upload.id);
+    await supabase.from('statement_uploads').update({
+      status: 'completed', row_count: rows.length, processed_count: toInsert.length,
+      duplicate_count: duplicateCount, completed_at: new Date().toISOString(),
+    }).eq('id', upload.id);
 
-    console.log(`Completed: ${toInsert.length} inserted, ${duplicateCount} duplicates, linked=${linkedToPayment}`);
-
-    return new Response(JSON.stringify({ 
-      success: true,
-      processedCount: toInsert.length,
-      duplicateCount,
-      totalRows: rows.length,
-      linkedToPayment,
-      parentTransactionId,
+    return new Response(JSON.stringify({
+      success: true, processedCount: toInsert.length, duplicateCount, totalRows: rows.length,
     }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
   } catch (error) {

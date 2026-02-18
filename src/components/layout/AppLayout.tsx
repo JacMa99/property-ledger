@@ -12,7 +12,8 @@ import {
   BarChart3,
   Menu,
   X,
-  FolderOpen
+  FolderOpen,
+  Wallet
 } from 'lucide-react';
  import { useAuth } from '@/hooks/useAuth';
  import { Button } from '@/components/ui/button';
@@ -25,6 +26,7 @@ import {
  
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
+  { name: 'Accounts', href: '/accounts', icon: Wallet },
   { name: 'Properties', href: '/properties', icon: Building2 },
   { name: 'Transactions', href: '/transactions', icon: ArrowUpDown },
   { name: 'Upload', href: '/upload', icon: Upload },

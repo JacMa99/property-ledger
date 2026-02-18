@@ -116,6 +116,9 @@
           const category = tx.category;
           const txType = (tx as any).type || 'expense';
           
+          // Skip transfer and cc_payment from P&L calculations
+          if (txType === 'transfer' || txType === 'cc_payment') return;
+          
           // Category breakdown: income positive, expense negative
           const signedAmount = txType === 'income' ? Math.abs(amount) : -Math.abs(amount);
           categoryMap[category] = (categoryMap[category] || 0) + signedAmount;
