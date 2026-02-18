@@ -506,6 +506,9 @@ export type Database = {
         | "travel"
         | "transfer"
         | "uncategorized"
+        | "credit_card_payment"
+        | "cash_withdrawal"
+        | "groceries"
       transaction_type: "income" | "expense"
       upload_source_type: "bank" | "credit_card"
     }
@@ -653,6 +656,9 @@ export const Constants = {
         "travel",
         "transfer",
         "uncategorized",
+        "credit_card_payment",
+        "cash_withdrawal",
+        "groceries",
       ],
       transaction_type: ["income", "expense"],
       upload_source_type: ["bank", "credit_card"],

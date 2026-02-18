@@ -1,21 +1,22 @@
  // Transaction category display names and colors
- export const CATEGORY_CONFIG: Record<string, { label: string; color: string; type: 'income' | 'expense' | 'transfer' }> = {
-   rent_income: { label: 'Rent Income', color: 'pill-income', type: 'income' },
-   other_income: { label: 'Other Income', color: 'pill-income', type: 'income' },
-   mortgage: { label: 'Mortgage', color: 'pill-expense', type: 'expense' },
-   property_tax: { label: 'Property Tax', color: 'pill-expense', type: 'expense' },
-   insurance: { label: 'Insurance', color: 'pill-expense', type: 'expense' },
-   utilities: { label: 'Utilities', color: 'pill-expense', type: 'expense' },
-   maintenance: { label: 'Maintenance', color: 'pill-expense', type: 'expense' },
-   management_fee: { label: 'Management Fee', color: 'pill-expense', type: 'expense' },
-   hoa_fee: { label: 'HOA Fee', color: 'pill-expense', type: 'expense' },
-   legal: { label: 'Legal', color: 'pill-expense', type: 'expense' },
-   advertising: { label: 'Advertising', color: 'pill-expense', type: 'expense' },
-   supplies: { label: 'Supplies', color: 'pill-expense', type: 'expense' },
-   travel: { label: 'Travel', color: 'pill-expense', type: 'expense' },
-   transfer: { label: 'Transfer', color: 'pill-transfer', type: 'transfer' },
-   uncategorized: { label: 'Uncategorized', color: 'pill-warning', type: 'expense' },
- };
+export const CATEGORY_CONFIG: Record<string, { label: string; color: string; type: 'income' | 'expense' | 'transfer' }> = {
+  rent_income: { label: 'Rent Income', color: 'pill-income', type: 'income' },
+  other_income: { label: 'Other Income', color: 'pill-income', type: 'income' },
+  mortgage: { label: 'Mortgage', color: 'pill-expense', type: 'expense' },
+  property_tax: { label: 'Property Tax', color: 'pill-expense', type: 'expense' },
+  insurance: { label: 'Insurance', color: 'pill-expense', type: 'expense' },
+  utilities: { label: 'Utilities', color: 'pill-expense', type: 'expense' },
+  maintenance: { label: 'Maintenance', color: 'pill-expense', type: 'expense' },
+  management_fee: { label: 'Management Fee', color: 'pill-expense', type: 'expense' },
+  credit_card_payment: { label: 'Credit Card Payment', color: 'pill-expense', type: 'expense' },
+  cash_withdrawal: { label: 'Cash Withdrawal', color: 'pill-expense', type: 'expense' },
+  groceries: { label: 'Groceries', color: 'pill-expense', type: 'expense' },
+  legal: { label: 'Legal', color: 'pill-expense', type: 'expense' },
+  advertising: { label: 'Advertising', color: 'pill-expense', type: 'expense' },
+  supplies: { label: 'Supplies', color: 'pill-expense', type: 'expense' },
+  transfer: { label: 'Transfer', color: 'pill-transfer', type: 'transfer' },
+  uncategorized: { label: 'Uncategorized', color: 'pill-warning', type: 'expense' },
+};
  
  export const CATEGORY_OPTIONS = Object.entries(CATEGORY_CONFIG).map(([value, config]) => ({
    value,
