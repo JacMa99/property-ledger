@@ -14,6 +14,42 @@ export type Database = {
   }
   public: {
     Tables: {
+      accounts: {
+        Row: {
+          account_type: Database["public"]["Enums"]["account_type"]
+          created_at: string
+          id: string
+          institution: string | null
+          is_active: boolean
+          last4: string | null
+          name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          account_type: Database["public"]["Enums"]["account_type"]
+          created_at?: string
+          id?: string
+          institution?: string | null
+          is_active?: boolean
+          last4?: string | null
+          name: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          account_type?: Database["public"]["Enums"]["account_type"]
+          created_at?: string
+          id?: string
+          institution?: string | null
+          is_active?: boolean
+          last4?: string | null
+          name?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string
@@ -217,6 +253,7 @@ export type Database = {
       }
       statement_uploads: {
         Row: {
+          account_id: string | null
           completed_at: string | null
           duplicate_count: number | null
           error_message: string | null
@@ -230,6 +267,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          account_id?: string | null
           completed_at?: string | null
           duplicate_count?: number | null
           error_message?: string | null
@@ -243,6 +281,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          account_id?: string | null
           completed_at?: string | null
           duplicate_count?: number | null
           error_message?: string | null
@@ -255,7 +294,15 @@ export type Database = {
           uploaded_at?: string
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "statement_uploads_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "accounts"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       tenants: {
         Row: {
@@ -338,6 +385,7 @@ export type Database = {
       }
       transactions: {
         Row: {
+          account_id: string | null
           amount: number
           category: Database["public"]["Enums"]["transaction_category"]
           created_at: string
@@ -345,6 +393,7 @@ export type Database = {
           description: string
           hash: string
           id: string
+          linked_transaction_id: string | null
           needs_review: boolean
           parent_transaction_id: string | null
           project_id: string | null
@@ -354,11 +403,13 @@ export type Database = {
           subcategory: string | null
           tenant_id: string | null
           type: Database["public"]["Enums"]["transaction_type"]
+          type_overridden: boolean
           unit_id: string | null
           updated_at: string
           user_id: string
         }
         Insert: {
+          account_id?: string | null
           amount: number
           category?: Database["public"]["Enums"]["transaction_category"]
           created_at?: string
@@ -366,6 +417,7 @@ export type Database = {
           description: string
           hash: string
           id?: string
+          linked_transaction_id?: string | null
           needs_review?: boolean
           parent_transaction_id?: string | null
           project_id?: string | null
@@ -375,11 +427,13 @@ export type Database = {
           subcategory?: string | null
           tenant_id?: string | null
           type?: Database["public"]["Enums"]["transaction_type"]
+          type_overridden?: boolean
           unit_id?: string | null
           updated_at?: string
           user_id: string
         }
         Update: {
+          account_id?: string | null
           amount?: number
           category?: Database["public"]["Enums"]["transaction_category"]
           created_at?: string
@@ -387,6 +441,7 @@ export type Database = {
           description?: string
           hash?: string
           id?: string
+          linked_transaction_id?: string | null
           needs_review?: boolean
           parent_transaction_id?: string | null
           project_id?: string | null
@@ -396,11 +451,26 @@ export type Database = {
           subcategory?: string | null
           tenant_id?: string | null
           type?: Database["public"]["Enums"]["transaction_type"]
+          type_overridden?: boolean
           unit_id?: string | null
           updated_at?: string
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "transactions_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "transactions_linked_transaction_id_fkey"
+            columns: ["linked_transaction_id"]
+            isOneToOne: false
+            referencedRelation: "transactions"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "transactions_parent_transaction_id_fkey"
             columns: ["parent_transaction_id"]
@@ -488,6 +558,7 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
+      account_type: "bank" | "credit_card"
       rule_match_type: "contains" | "regex"
       statement_upload_status: "pending" | "processing" | "completed" | "failed"
       transaction_category:
@@ -509,7 +580,7 @@ export type Database = {
         | "credit_card_payment"
         | "cash_withdrawal"
         | "groceries"
-      transaction_type: "income" | "expense"
+      transaction_type: "income" | "expense" | "transfer" | "cc_payment"
       upload_source_type: "bank" | "credit_card"
     }
     CompositeTypes: {
@@ -638,6 +709,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      account_type: ["bank", "credit_card"],
       rule_match_type: ["contains", "regex"],
       statement_upload_status: ["pending", "processing", "completed", "failed"],
       transaction_category: [
@@ -660,7 +732,7 @@ export const Constants = {
         "cash_withdrawal",
         "groceries",
       ],
-      transaction_type: ["income", "expense"],
+      transaction_type: ["income", "expense", "transfer", "cc_payment"],
       upload_source_type: ["bank", "credit_card"],
     },
   },

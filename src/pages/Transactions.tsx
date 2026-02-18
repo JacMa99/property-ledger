@@ -39,7 +39,7 @@ import {
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
-import { formatDate, CATEGORY_OPTIONS } from '@/lib/constants';
+import { formatDate, CATEGORY_OPTIONS, TYPE_CONFIG, TYPE_OPTIONS, getDefaultTypeForCategory } from '@/lib/constants';
 import { 
   ArrowUpDown, 
   Search, 
@@ -61,7 +61,7 @@ interface Transaction {
   amount: number;
   category: string;
   subcategory: string | null;
-  type: 'income' | 'expense';
+  type: 'income' | 'expense' | 'transfer' | 'cc_payment';
   property_id: string | null;
   unit_id: string | null;
   project_id: string | null;
@@ -98,6 +98,7 @@ export default function Transactions() {
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [typeFilter, setTypeFilter] = useState<string>('all');
   const [needsReviewFilter, setNeedsReviewFilter] = useState(searchParams.get('needsReview') === 'true');
   const [propertyFilter, setPropertyFilter] = useState<string>('all');
   
@@ -105,11 +106,12 @@ export default function Transactions() {
   const [editForm, setEditForm] = useState({
     category: '',
     subcategory: '',
-    type: 'expense' as 'income' | 'expense',
+    type: 'expense' as string,
     property_id: '',
     unit_id: '',
     project_id: '',
     needs_review: false,
+    type_overridden: false,
   });
   
   // Rule form
@@ -230,6 +232,7 @@ export default function Transactions() {
           unit_id: editForm.unit_id || null,
           project_id: editForm.project_id || null,
           needs_review: editForm.needs_review,
+          type_overridden: editForm.type_overridden,
         })
         .eq('id', editingTx.id);
 
@@ -283,6 +286,7 @@ export default function Transactions() {
       unit_id: tx.unit_id || '',
       project_id: tx.project_id || '',
       needs_review: tx.needs_review,
+      type_overridden: (tx as any).type_overridden || false,
     });
     setShowEditDialog(true);
   }
@@ -311,6 +315,7 @@ export default function Transactions() {
   const filteredTransactions = transactions.filter((tx) => {
     if (searchQuery && !tx.description.toLowerCase().includes(searchQuery.toLowerCase())) return false;
     if (categoryFilter !== 'all' && tx.category !== categoryFilter) return false;
+    if (typeFilter !== 'all' && tx.type !== typeFilter) return false;
     if (needsReviewFilter && !tx.needs_review) return false;
     if (propertyFilter !== 'all' && tx.property_id !== propertyFilter) return false;
     return true;
@@ -319,9 +324,10 @@ export default function Transactions() {
   const selectedPropertyUnits = properties.find(p => p.id === editForm.property_id)?.units || [];
 
   function renderTransactionRow(tx: Transaction, isChild = false) {
+    const displayAmount = (tx.type === 'expense' || tx.type === 'cc_payment') ? -Math.abs(tx.amount) : Math.abs(tx.amount);
+    const typeConf = TYPE_CONFIG[tx.type] || TYPE_CONFIG.expense;
     const hasChildren = (tx.children?.length || 0) > 0;
     const isExpanded = expandedRows.has(tx.id);
-    const displayAmount = tx.type === 'expense' ? -Math.abs(tx.amount) : Math.abs(tx.amount);
 
     return (
       <TableRow key={tx.id} className={`${tx.needs_review ? 'bg-warning/5' : ''} ${isChild ? 'bg-muted/20' : ''}`}>
@@ -350,13 +356,12 @@ export default function Transactions() {
           </div>
         </TableCell>
         <TableCell>
-          <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full ${
-            tx.type === 'income' 
-              ? 'bg-success/10 text-success' 
-              : 'bg-destructive/10 text-destructive'
-          }`}>
-            <span className={`h-1.5 w-1.5 rounded-full ${tx.type === 'income' ? 'bg-success' : 'bg-destructive'}`} />
-            {tx.type === 'income' ? 'Income' : 'Expense'}
+          <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full ${typeConf.color.replace('pill-', 'bg-') + '/10'}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${
+              tx.type === 'income' ? 'bg-success' :
+              tx.type === 'expense' ? 'bg-destructive' : 'bg-info'
+            }`} />
+            {typeConf.label}
           </span>
         </TableCell>
         <TableCell><CategoryBadge category={tx.category} /></TableCell>
@@ -446,12 +451,13 @@ export default function Transactions() {
             <AlertCircle className="h-4 w-4" />
             Needs Review
           </Button>
-          {(searchQuery || categoryFilter !== 'all' || needsReviewFilter || propertyFilter !== 'all') && (
+          {(searchQuery || categoryFilter !== 'all' || typeFilter !== 'all' || needsReviewFilter || propertyFilter !== 'all') && (
             <Button
               variant="ghost"
               onClick={() => {
                 setSearchQuery('');
                 setCategoryFilter('all');
+                setTypeFilter('all');
                 setNeedsReviewFilter(false);
                 setPropertyFilter('all');
               }}
@@ -515,7 +521,10 @@ export default function Transactions() {
             <div className="space-y-4 py-4">
               <div className="space-y-2">
                 <Label>Category</Label>
-                <Select value={editForm.category} onValueChange={(v) => setEditForm({ ...editForm, category: v })}>
+                <Select value={editForm.category} onValueChange={(v) => {
+                  const newType = editForm.type_overridden ? editForm.type : getDefaultTypeForCategory(v);
+                  setEditForm({ ...editForm, category: v, type: newType });
+                }}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -528,23 +537,22 @@ export default function Transactions() {
               </div>
               <div className="space-y-2">
                 <Label>Type</Label>
-                <Select value={editForm.type} onValueChange={(v: 'income' | 'expense') => setEditForm({ ...editForm, type: v })}>
+                <Select value={editForm.type} onValueChange={(v) => setEditForm({ ...editForm, type: v, type_overridden: true })}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="income">
-                      <span className="flex items-center gap-2">
-                        <span className="h-2 w-2 rounded-full bg-success" />
-                        Income
-                      </span>
-                    </SelectItem>
-                    <SelectItem value="expense">
-                      <span className="flex items-center gap-2">
-                        <span className="h-2 w-2 rounded-full bg-destructive" />
-                        Expense
-                      </span>
-                    </SelectItem>
+                    {TYPE_OPTIONS.map((t) => (
+                      <SelectItem key={t.value} value={t.value}>
+                        <span className="flex items-center gap-2">
+                          <span className={`h-2 w-2 rounded-full ${
+                            t.value === 'income' ? 'bg-success' :
+                            t.value === 'expense' ? 'bg-destructive' : 'bg-info'
+                          }`} />
+                          {t.label}
+                        </span>
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
