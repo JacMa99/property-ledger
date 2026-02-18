@@ -162,6 +162,39 @@ function parseCSV(csvContent: string): CSVRow[] {
   return rows;
 }
 
+// Keyword-based auto-categorization (best-effort, case-insensitive)
+const CATEGORY_KEYWORDS: { category: string; keywords: string[] }[] = [
+  { category: 'rent_income', keywords: ['rent payment', 'tenant payment', 'lease payment', 'rental income', 'rent deposit'] },
+  { category: 'other_income', keywords: ['interest earned', 'dividend', 'refund', 'reimbursement', 'rebate', 'cashback'] },
+  { category: 'mortgage', keywords: ['mortgage', 'home loan', 'loan payment'] },
+  { category: 'property_tax', keywords: ['property tax', 'real estate tax', 'county tax', 'tax assessment'] },
+  { category: 'insurance', keywords: ['insurance', 'homeowner', 'hazard', 'liability', 'policy premium'] },
+  { category: 'utilities', keywords: ['electric', 'electricity', 'gas bill', 'water bill', 'sewer', 'trash', 'waste', 'utility', 'power company', 'energy', 'comcast', 'spectrum', 'internet', 'cable'] },
+  { category: 'maintenance', keywords: ['repair', 'maintenance', 'plumber', 'plumbing', 'hvac', 'landscap', 'lawn', 'pest control', 'handyman', 'cleaning', 'roofing', 'painting', 'contractor'] },
+  { category: 'management_fee', keywords: ['management fee', 'property management', 'mgmt fee'] },
+  { category: 'credit_card_payment', keywords: ['credit card', 'card payment', 'chase card', 'amex', 'visa payment', 'mastercard', 'citi card', 'capital one', 'discover card'] },
+  { category: 'cash_withdrawal', keywords: ['atm', 'cash withdrawal', 'cash back', 'withdraw'] },
+  { category: 'groceries', keywords: ['grocery', 'groceries', 'supermarket', 'walmart', 'costco', 'kroger', 'safeway', 'aldi', 'trader joe', 'whole foods', 'publix', 'heb', 'food lion'] },
+  { category: 'legal', keywords: ['attorney', 'lawyer', 'legal fee', 'law firm', 'notary', 'court'] },
+  { category: 'advertising', keywords: ['advertising', 'marketing', 'zillow', 'apartments.com', 'craigslist', 'listing fee'] },
+  { category: 'supplies', keywords: ['supplies', 'hardware store', 'home depot', 'lowes', 'menards'] },
+  { category: 'transfer', keywords: ['transfer', 'xfer', 'wire', 'zelle', 'venmo', 'paypal'] },
+];
+
+const INCOME_CATEGORIES = new Set(['rent_income', 'other_income']);
+
+function autoDetectCategory(description: string): { category: string; confidence: 'high' | 'low' } | null {
+  const desc = description.toLowerCase();
+  for (const { category, keywords } of CATEGORY_KEYWORDS) {
+    for (const kw of keywords) {
+      if (desc.includes(kw)) {
+        return { category, confidence: 'high' };
+      }
+    }
+  }
+  return null;
+}
+
 function generateHash(row: CSVRow): string {
   const str = `${row.date}|${row.description}|${row.amount.toFixed(2)}`;
   let hash = 0;
@@ -314,7 +347,9 @@ serve(async (req) => {
       let category = 'uncategorized';
       let propertyId = null;
       let unitId = null;
+      let matchedByRule = false;
       
+      // Priority 1: User-defined rules
       for (const rule of rules || []) {
         let matches = false;
         if (rule.match_type === 'contains') {
@@ -326,15 +361,25 @@ serve(async (req) => {
           category = rule.category;
           propertyId = rule.property_id;
           unitId = rule.unit_id;
+          matchedByRule = true;
           break;
         }
       }
 
-      const isIncomeCategory = ['rent_income', 'other_income'].includes(category);
+      // Priority 2: Keyword-based auto-detection
+      if (!matchedByRule) {
+        const detected = autoDetectCategory(row.description);
+        if (detected && detected.confidence === 'high') {
+          category = detected.category;
+        }
+        // Low confidence or no match → stays uncategorized, needs review
+      }
+
+      // Determine type: income categories → income, everything else → expense
       // Credit card transactions are always expenses
       const transactionType = sourceType === 'credit_card' 
         ? 'expense' 
-        : ((isIncomeCategory || row.amount > 0) ? 'income' : 'expense');
+        : (INCOME_CATEGORIES.has(category) ? 'income' : (row.amount > 0 && category === 'uncategorized' ? 'income' : 'expense'));
 
       toInsert.push({
         user_id: userId,
