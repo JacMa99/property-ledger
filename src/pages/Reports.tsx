@@ -183,27 +183,88 @@
       return { income, expenses, net: income - expenses };
     }, [categoryBreakdown]);
  
-   function exportCSV() {
-     const headers = ['Category', 'Amount'];
-     const rows = categoryBreakdown.map(({ category, total }) => [
-       CATEGORY_CONFIG[category]?.label || category,
-       total.toFixed(2),
-     ]);
-     
-     rows.push([]);
-     rows.push(['Total Income', totals.income.toFixed(2)]);
-     rows.push(['Total Expenses', totals.expenses.toFixed(2)]);
-     rows.push(['Net Income', totals.net.toFixed(2)]);
- 
-     const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-     const blob = new Blob([csv], { type: 'text/csv' });
-     const url = URL.createObjectURL(blob);
-     const a = document.createElement('a');
-     a.href = url;
-     a.download = `pnl-report-${selectedMonth}.csv`;
-     a.click();
-     URL.revokeObjectURL(url);
-   }
+  function exportCSV() {
+    const selectedPropertyName =
+      selectedProperty === 'all'
+        ? 'All Properties'
+        : properties.find((p) => p.id === selectedProperty)?.name ?? 'Unknown';
+
+    const exportDate = new Intl.DateTimeFormat('en-US', {
+      year: 'numeric', month: 'long', day: 'numeric',
+    }).format(new Date());
+
+    // Helper: wrap a value in quotes, escaping any internal quotes
+    const q = (val: string | number) => `"${String(val).replace(/"/g, '""')}"`;
+
+    const lines: string[] = [];
+
+    // ── Report header ──────────────────────────────────────────────
+    lines.push([q('P&L Report'), q(formatMonth(selectedMonth))].join(','));
+    lines.push([q('Property'), q(selectedPropertyName)].join(','));
+    lines.push([q('Exported on'), q(exportDate)].join(','));
+    lines.push('');
+
+    // ── Summary ────────────────────────────────────────────────────
+    lines.push(q('SUMMARY'));
+    lines.push([q('Metric'), q('Amount (USD)')].join(','));
+    lines.push([q('Total Income'),  q(totals.income.toFixed(2))].join(','));
+    lines.push([q('Total Expenses'), q(totals.expenses.toFixed(2))].join(','));
+    lines.push([q('Net Income'),    q(totals.net.toFixed(2))].join(','));
+    lines.push('');
+
+    // ── Category Breakdown ─────────────────────────────────────────
+    lines.push(q('CATEGORY BREAKDOWN'));
+    lines.push([q('Category'), q('Type'), q('Amount (USD)')].join(','));
+
+    const incomeRows = categoryBreakdown.filter(({ total }) => total > 0);
+    const expenseRows = categoryBreakdown.filter(({ total }) => total < 0);
+
+    if (incomeRows.length) {
+      lines.push(q('— Income —'));
+      incomeRows.forEach(({ category, total }) => {
+        lines.push([
+          q(CATEGORY_CONFIG[category]?.label || category),
+          q('Income'),
+          q(total.toFixed(2)),
+        ].join(','));
+      });
+    }
+
+    if (expenseRows.length) {
+      lines.push(q('— Expenses —'));
+      expenseRows.forEach(({ category, total }) => {
+        lines.push([
+          q(CATEGORY_CONFIG[category]?.label || category),
+          q('Expense'),
+          q(Math.abs(total).toFixed(2)),
+        ].join(','));
+      });
+    }
+    lines.push('');
+
+    // ── Property P&L ───────────────────────────────────────────────
+    if (propertyPnL.length > 0) {
+      lines.push(q('PROPERTY PERFORMANCE'));
+      lines.push([q('Property'), q('Income (USD)'), q('Expenses (USD)'), q('Net (USD)')].join(','));
+      propertyPnL.forEach((pnl) => {
+        lines.push([
+          q(pnl.property_name),
+          q(pnl.income.toFixed(2)),
+          q(pnl.expenses.toFixed(2)),
+          q(pnl.net.toFixed(2)),
+        ].join(','));
+      });
+    }
+
+    const csv = lines.join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `pnl-report-${selectedMonth}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
  
    if (loading) {
      return (
