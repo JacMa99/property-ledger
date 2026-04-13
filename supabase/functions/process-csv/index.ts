@@ -279,10 +279,19 @@ function getTypeForCategory(category: string, sourceType: string, amount: number
   if (category === 'credit_card_payment') return 'cc_payment';
   if (category === 'transfer') return 'transfer';
   if (INCOME_CATEGORIES.has(category)) return 'income';
-  // CC statement transactions are expenses (except payment credits handled separately)
-  if (sourceType === 'credit_card') return 'expense';
-  // Bank: positive uncategorized amounts might be income
-  if (category === 'uncategorized' && amount > 0) return 'income';
+
+  // For bank accounts: use the amount sign to decide income vs expense.
+  // Positive amounts are money coming IN (income), negative are going OUT (expense).
+  if (sourceType === 'bank') {
+    return amount > 0 ? 'income' : 'expense';
+  }
+
+  // For credit card statements: charges (negative / normal) are expenses,
+  // positive amounts are credits/refunds → income
+  if (sourceType === 'credit_card') {
+    return amount > 0 ? 'income' : 'expense';
+  }
+
   return 'expense';
 }
 
