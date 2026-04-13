@@ -99,10 +99,13 @@ function parseCSVLine(line: string): string[] {
 const DATE_PATTERNS = ['date', 'fecha', 'posted', 'transaction date', 'posting date', 'value date', 'fecha valor', 'fecha operacion'];
 // Description patterns — intentionally excludes 'reference'/'referencia' to avoid
 // matching "No. Referencia" (a reference number column) as a description column.
-const DESC_PATTERNS = ['description', 'descripcion', 'memo', 'payee', 'details', 'detalle', 'concepto', 'narrative'];
+const DESC_PATTERNS = ['description', 'descripcion', 'memo', 'payee', 'details', 'detalle', 'concepto', 'narrative', 'comercio', 'establecimiento', 'lugar', 'merchant', 'nombre'];
 const AMOUNT_PATTERNS = ['amount', 'monto', 'importe', 'value', 'valor'];
 const DEBIT_PATTERNS = ['debit', 'debito', 'withdrawal', 'retiro', 'cargo', 'debits'];
 const CREDIT_PATTERNS = ['credit', 'credito', 'deposit', 'deposito', 'abono', 'credits'];
+
+// Known header names that indicate a CR/DT type-indicator column (not a real description)
+const CRDT_HEADER_PATTERNS = ['descripcion corta', 'short description', 'tipo transaccion', 'tipo movimiento', 'tipo de movimiento', 'tipo'];
 
 // Headers that look like description columns by name but are NOT merchant descriptions.
 // Used to exclude false positives when scanning for description columns.
@@ -110,6 +113,11 @@ const DESC_EXCLUSIONS = ['referencia', 'reference', 'no.', 'numero', 'number', '
 
 function isExcludedDescHeader(normalized: string): boolean {
   return DESC_EXCLUSIONS.some(excl => normalized.includes(excl));
+}
+
+// Check if a header name matches known CR/DT indicator column patterns
+function isCRDTHeaderName(normalized: string): boolean {
+  return CRDT_HEADER_PATTERNS.some(p => normalized === p || normalized.includes(p));
 }
 
 function findColumnIndex(headers: string[], patterns: string[]): number {
@@ -125,7 +133,7 @@ function findColumnIndex(headers: string[], patterns: string[]): number {
 // Returns all description-like column indices, ordered by match quality:
 //   1. Exact match to "descripcion" / "description" (highest priority)
 //   2. Other DESC_PATTERNS matches
-// Columns that match DESC_EXCLUSIONS are always skipped.
+// Columns that match DESC_EXCLUSIONS or CRDT_HEADER_PATTERNS are always skipped.
 function findAllColumnIndices(headers: string[], patterns: string[]): number[] {
   const exact: number[] = [];
   const loose: number[] = [];
@@ -135,6 +143,8 @@ function findAllColumnIndices(headers: string[], patterns: string[]): number[] {
 
     // Skip known non-description columns (reference numbers, IDs, etc.)
     if (isExcludedDescHeader(normalized)) continue;
+    // Skip known CR/DT indicator columns
+    if (isCRDTHeaderName(normalized)) continue;
 
     let matched = false;
     for (const pattern of patterns) {
@@ -168,12 +178,45 @@ function isCRDTColumn(values: string[], colIndex: number): boolean {
   return samples.every(v => CR_DT_VALUES.has(v.toLowerCase().trim()));
 }
 
+// Find a CR/DT indicator column by header name first, then by value sampling
+function findCRDTColumn(headers: string[], lines: string[], headerIndex: number): number {
+  // Strategy 1: Match by known CR/DT header names
+  for (let i = 0; i < headers.length; i++) {
+    const normalized = normalizeHeader(headers[i]);
+    if (isCRDTHeaderName(normalized)) {
+      console.log(`Detected CR/DT column by header name: "${headers[i]}" at index ${i}`);
+      return i;
+    }
+  }
+
+  // Strategy 2: Check any description-like column whose values are all CR/DT indicators
+  // (This catches columns named "Descripción" that only contain CR/DT values)
+  for (let i = 0; i < headers.length; i++) {
+    const normalized = normalizeHeader(headers[i]);
+    if (isExcludedDescHeader(normalized)) continue;
+    // Only check columns that look description-like
+    const isDescLike = DESC_PATTERNS.some(p => normalized.includes(p));
+    if (!isDescLike) continue;
+
+    const dataLines = lines.slice(headerIndex + 1).filter(l => l.trim());
+    const samples = dataLines.map(l => parseCSVLine(l)[i]?.replace(/"/g, '').trim() ?? '');
+    if (isCRDTColumn(samples, i)) {
+      console.log(`Detected CR/DT column by value sampling: "${headers[i]}" at index ${i}`);
+      return i;
+    }
+  }
+
+  return -1;
+}
+
 function findHeaderRow(lines: string[]): { headerIndex: number; headers: string[] } {
   for (let i = 0; i < Math.min(30, lines.length); i++) {
     const cells = parseCSVLine(lines[i]);
     const dateIdx = findColumnIndex(cells, DATE_PATTERNS);
     const descIdx = findColumnIndex(cells, DESC_PATTERNS);
-    if (dateIdx !== -1 && descIdx !== -1) return { headerIndex: i, headers: cells };
+    // Also accept rows with a date column + a CR/DT-named column as valid headers
+    const hasCRDTHeader = cells.some(c => isCRDTHeaderName(normalizeHeader(c)));
+    if (dateIdx !== -1 && (descIdx !== -1 || hasCRDTHeader)) return { headerIndex: i, headers: cells };
   }
   return { headerIndex: -1, headers: [] };
 }
@@ -188,25 +231,38 @@ function parseCSV(csvContent: string): CSVRow[] {
   }
 
   const dateIdx = findColumnIndex(headers, DATE_PATTERNS);
-  const descIndices = findAllColumnIndices(headers, DESC_PATTERNS);
   const amountIdx = findColumnIndex(headers, AMOUNT_PATTERNS);
   const debitIdx = findColumnIndex(headers, DEBIT_PATTERNS);
   const creditIdx = findColumnIndex(headers, CREDIT_PATTERNS);
 
-  // Detect whether the first description column is a CR/DT type indicator.
-  // Sample all data rows for that column to decide.
-  let crDtColIdx = -1;
+  // Find CR/DT indicator column (by header name or by value sampling)
+  const crDtColIdx = findCRDTColumn(headers, lines, headerIndex);
+
+  // Find real description columns, excluding the CR/DT column
+  const descIndices = findAllColumnIndices(headers, DESC_PATTERNS);
   let realDescIdx = descIndices[0] ?? -1;
 
-  if (descIndices.length >= 2) {
-    const dataLines = lines.slice(headerIndex + 1).filter(l => l.trim());
-    const firstDescSamples = dataLines.map(l => parseCSVLine(l)[descIndices[0]]?.replace(/"/g, '').trim() ?? '');
-    if (isCRDTColumn(firstDescSamples, descIndices[0])) {
-      crDtColIdx = descIndices[0];
-      realDescIdx = descIndices[1];
-      console.log(`Detected CR/DT indicator column at index ${crDtColIdx}; using column ${realDescIdx} as description`);
+  // If we have no description columns from patterns, try to find ANY text column
+  // that isn't date, amount, debit, credit, or CR/DT
+  if (realDescIdx === -1) {
+    const usedIndices = new Set([dateIdx, amountIdx, debitIdx, creditIdx, crDtColIdx].filter(i => i !== -1));
+    for (let i = 0; i < headers.length; i++) {
+      if (usedIndices.has(i)) continue;
+      const normalized = normalizeHeader(headers[i]);
+      if (isExcludedDescHeader(normalized)) continue;
+      // Pick the first non-numeric-looking column
+      const dataLines = lines.slice(headerIndex + 1, headerIndex + 6).filter(l => l.trim());
+      const samples = dataLines.map(l => parseCSVLine(l)[i]?.replace(/"/g, '').trim() ?? '');
+      const hasText = samples.some(s => s && !/^[\d.,\-\s]+$/.test(s));
+      if (hasText) {
+        console.log(`Fallback description column: "${headers[i]}" at index ${i}`);
+        realDescIdx = i;
+        break;
+      }
     }
   }
+
+  console.log(`Column mapping: date=${dateIdx}, desc=${realDescIdx}, amount=${amountIdx}, debit=${debitIdx}, credit=${creditIdx}, crdt=${crDtColIdx}`);
 
   const rows: CSVRow[] = [];
   for (let i = headerIndex + 1; i < lines.length; i++) {
